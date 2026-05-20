@@ -39,6 +39,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
         uri?.let { viewModel.setDownloadPath(context, it) }
     }
 
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { viewModel.exportSubscriptions(context, it) }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { viewModel.importSubscriptions(context, it) }
+    }
+
     // Refresh permissions when app returns to foreground
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -161,7 +169,37 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // YouTube Live Setting
+        // Data Management (Export/Import)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, Color.Black)
+                .padding(12.dp)
+        ) {
+            Text("Data Management", fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { exportLauncher.launch("subscriptions.json") },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
+                    shape = RectangleShape
+                ) {
+                    Text("EXPORT")
+                }
+                Button(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "application/octet-stream")) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                    shape = RectangleShape
+                ) {
+                    Text("IMPORT")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
         Column(
             modifier = Modifier
                 .fillMaxWidth()

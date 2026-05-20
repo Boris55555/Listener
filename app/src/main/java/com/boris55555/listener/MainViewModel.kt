@@ -233,6 +233,57 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun exportSubscriptions(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = StorageManager.exportSubscriptionsJson(context)
+                context.contentResolver.openOutputStream(uri)?.use { 
+                    it.write(json.toByteArray())
+                }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Subscriptions exported", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Export failed", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun importSubscriptions(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = context.contentResolver.openInputStream(uri)?.use { 
+                    it.readBytes().decodeToString()
+                }
+                if (json != null) {
+                    val imported = StorageManager.importSubscriptionsJson(json)
+                    val current = _subscriptions.value.toMutableList()
+                    var addedCount = 0
+                    imported.forEach { sub ->
+                        if (current.none { it.url == sub.url }) {
+                            current.add(sub)
+                            addedCount++
+                        }
+                    }
+                    if (addedCount > 0) {
+                        StorageManager.saveSubscriptions(context, current)
+                        _subscriptions.value = current.sortedByDescending { it.lastUpdated }
+                        refreshFollowStatus()
+                    }
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Imported $addedCount new subscriptions", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Import failed", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     private fun refreshFollowStatus() {
         val followedUrls = _subscriptions.value.map { it.url }.toSet()
         _searchResults.value = _searchResults.value.map { 

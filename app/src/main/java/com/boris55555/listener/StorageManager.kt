@@ -71,6 +71,35 @@ object StorageManager {
         file.writeText(content)
     }
 
+    fun exportSubscriptionsJson(context: Context): String {
+        val subs = loadSubscriptions(context)
+        val array = JSONArray()
+        subs.forEach { sub ->
+            val obj = JSONObject()
+            obj.put("name", sub.name)
+            obj.put("url", sub.url)
+            obj.put("type", sub.type)
+            array.put(obj)
+        }
+        return array.toString(2)
+    }
+
+    fun importSubscriptionsJson(jsonString: String): List<Subscription> {
+        val results = mutableListOf<Subscription>()
+        try {
+            val array = JSONArray(jsonString)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                results.add(Subscription(
+                    name = obj.getString("name"),
+                    url = obj.getString("url"),
+                    type = obj.optString("type", "YOUTUBE")
+                ))
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        return results
+    }
+
     fun saveDownloadMetadata(context: Context, fileName: String, uploaderName: String?, isRss: Boolean) {
         try {
             val file = File(context.filesDir, DOWNLOAD_METADATA_FILE)
