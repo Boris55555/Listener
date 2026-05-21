@@ -88,7 +88,7 @@ class MainViewModel : ViewModel() {
             val subs = withContext(Dispatchers.IO) {
                 StorageManager.loadSubscriptions(context)
             }
-            _subscriptions.value = subs.sortedByDescending { it.lastUpdated }
+            _subscriptions.value = subs.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
             
             withContext(Dispatchers.IO) {
                 channelCache.putAll(StorageManager.loadChannelCache(context))
@@ -214,8 +214,9 @@ class MainViewModel : ViewModel() {
         val current = _subscriptions.value.toMutableList()
         if (current.none { it.url == url }) {
             current.add(Subscription(name, url, type, System.currentTimeMillis()))
-            StorageManager.saveSubscriptions(context, current)
-            _subscriptions.value = current.sortedByDescending { it.lastUpdated }
+            val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+            StorageManager.saveSubscriptions(context, sorted)
+            _subscriptions.value = sorted
             refreshFollowStatus()
             android.widget.Toast.makeText(context, "Subscribed: $name", android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -225,8 +226,9 @@ class MainViewModel : ViewModel() {
         val current = _subscriptions.value.toMutableList()
         val sub = current.find { it.url == url }
         current.removeAll { it.url == url }
-        StorageManager.saveSubscriptions(context, current)
-        _subscriptions.value = current.sortedByDescending { it.lastUpdated }
+        val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+        StorageManager.saveSubscriptions(context, sorted)
+        _subscriptions.value = sorted
         refreshFollowStatus()
         sub?.let {
             android.widget.Toast.makeText(context, "Unsubscribed: ${it.name}", android.widget.Toast.LENGTH_SHORT).show()
@@ -306,8 +308,14 @@ class MainViewModel : ViewModel() {
             return
         }
         val trimmedQuery = query.trim()
-        if (trimmedQuery.startsWith("http://") || trimmedQuery.startsWith("https://")) {
-            showRssPreview(context, trimmedQuery)
+        // Improved URL detection for RSS feeds
+        val isUrl = trimmedQuery.startsWith("http://") || 
+                    trimmedQuery.startsWith("https://") || 
+                    (trimmedQuery.contains("/") && trimmedQuery.contains(".") && !trimmedQuery.contains(" "))
+        
+        if (isUrl) {
+            val finalUrl = if (!trimmedQuery.startsWith("http")) "https://$trimmedQuery" else trimmedQuery
+            showRssPreview(context, finalUrl)
             return
         }
 
@@ -319,15 +327,18 @@ class MainViewModel : ViewModel() {
             _currentSubscription.value = null
             
             try {
-                val container = YouTubeManager.searchYouTube(trimmedQuery, contentFilter)
+                val youtubeResults = if (sourceFilter == SourceFilter.ALL || sourceFilter == SourceFilter.YOUTUBE) {
+                    val container = YouTubeManager.searchYouTube(trimmedQuery, contentFilter)
+                    currentNextPage = container.nextPage
+                    _hasMore.value = container.nextPage != null
+                    container.results
+                } else emptyList()
+
                 val podcastResults = if (sourceFilter == SourceFilter.ALL || sourceFilter == SourceFilter.PODCASTS) {
                     RssParser.searchPodcasts(trimmedQuery)
                 } else emptyList()
 
-                currentNextPage = container.nextPage
-                _hasMore.value = container.nextPage != null
-
-                val results = (container.results + podcastResults).map { res ->
+                val results = (youtubeResults + podcastResults).map { res ->
                     syncResultStatus(context, res)
                 }
                 _searchResults.value = results
@@ -335,12 +346,12 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private fun syncResultStatus(context: Context, res: SearchResult): SearchResult {
+    private suspend fun syncResultStatus(context: Context, res: SearchResult): SearchResult = withContext(Dispatchers.IO) {
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val fullyDownloaded = DownloadManagerHelper.isFileFullyDownloaded(context, res.name)
         val activeId = DownloadManagerHelper.getActiveDownloadId(dm, res.name)
         
-        return res.copy(
+        res.copy(
             isDownloaded = fullyDownloaded,
             isDownloading = activeId != null,
             downloadId = activeId,
@@ -373,23 +384,31 @@ class MainViewModel : ViewModel() {
         _currentSubscription.value = subscription
         currentSearchQuery = null
 
-        val cached = channelCache[subscription.url]
-        if (cached != null) {
-            _searchResults.value = cached.map { syncResultStatus(context, it) }
-            _hasMore.value = if (subscription.type == "RSS") (rssOriginalItems[subscription.url]?.size ?: 0) > cached.size else currentNextPage != null
-            refreshDownloadStatus(context)
-            return
-        }
+        viewModelScope.launch {
+            _isLoading.value = true
+            val cached = channelCache[subscription.url]
+            if (cached != null && cached.isNotEmpty()) {
+                val display = cached.take(5)
+                val synced = withContext(Dispatchers.IO) {
+                    display.map { syncResultStatus(context, it) }
+                }
+                _searchResults.value = synced
+                _hasMore.value = cached.size > 5 || (subscription.type != "RSS" && currentNextPage != null)
+                _isLoading.value = false
+                return@launch
+            }
 
-        if (!isNetworkOperationAllowed(context)) {
-            android.widget.Toast.makeText(context, "Mobile data not allowed. Use Wi-Fi.", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
+            if (!isNetworkOperationAllowed(context)) {
+                android.widget.Toast.makeText(context, "Mobile data not allowed. Use Wi-Fi.", android.widget.Toast.LENGTH_SHORT).show()
+                _isLoading.value = false
+                return@launch
+            }
 
-        if (subscription.type == "RSS") {
-            loadRssEpisodes(context, subscription.url)
-        } else {
-            loadYoutubeChannelInitial(context, subscription)
+            if (subscription.type == "RSS") {
+                loadRssEpisodes(context, subscription.url)
+            } else {
+                loadYoutubeChannelInitial(context, subscription)
+            }
         }
     }
 
@@ -397,10 +416,16 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val results = YouTubeManager.fetchChannelItems(subscription.url, _showYoutubeLive.value, subscription.name)
-                val display = results.take(10).map { syncResultStatus(context, it) }
+                val container = YouTubeManager.fetchChannelInitial(subscription.url, _showYoutubeLive.value, subscription.name)
+                currentListLinkHandler = container.linkHandler
+                currentNextPage = container.nextPage
+                _hasMore.value = container.nextPage != null
+                
+                val results = container.results
+                val display = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = display
-                channelCache[subscription.url] = results // Cache full list for later mapping
+                channelCache[subscription.url] = results 
+                _hasMore.value = results.size > 5 || container.nextPage != null
                 StorageManager.saveChannelCache(context, channelCache)
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
@@ -417,17 +442,22 @@ class MainViewModel : ViewModel() {
                         val results = if (sub.type == "RSS") {
                             RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }.take(10)
                         } else {
-                            YouTubeManager.fetchChannelItems(sub.url, _showYoutubeLive.value, sub.name).take(10)
+                            YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name).results.take(10)
                         }
                         if (results.isNotEmpty()) {
                             channelCache[sub.url] = results
-                            val latestUrl = results.first().url
+                            val latestItem = results.first()
+                            val latestUrl = latestItem.url
                             if (latestUrl != sub.latestItemUrl) {
                                 val current = _subscriptions.value.toMutableList()
                                 val index = current.indexOfFirst { it.url == sub.url }
                                 if (index != -1) {
-                                    current[index] = current[index].copy(latestItemUrl = latestUrl, lastUpdated = System.currentTimeMillis())
-                                    _subscriptions.value = current
+                                    current[index] = current[index].copy(
+                                        latestItemUrl = latestUrl, 
+                                        lastUpdated = System.currentTimeMillis(),
+                                        latestItemPubDate = latestItem.pubDate
+                                    )
+                                    _subscriptions.value = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
                                 }
                             }
                         }
@@ -451,29 +481,53 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
+                val cachedFull = channelCache[sub.url] ?: emptyList()
+                
                 if (sub.type == "RSS") {
-                    val fullList = rssOriginalItems[sub.url] ?: emptyList()
-                    val nextTen = fullList.drop(currentResults.size).take(10).map { syncResultStatus(context, it.first) }
-                    if (nextTen.isNotEmpty()) {
-                        val newList = currentResults + nextTen
+                    val nextFive = cachedFull.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
+                    if (nextFive.isNotEmpty()) {
+                        val newList = currentResults + nextFive
                         _searchResults.value = newList
-                        channelCache[sub.url] = newList
-                        _hasMore.value = fullList.size > newList.size
+                        _hasMore.value = cachedFull.size > newList.size
                     } else { _hasMore.value = false }
                 } else {
-                    val page = currentNextPage ?: return@launch
+                    val page = currentNextPage 
+                    // If we have more items in the already fetched batch from NewPipe, use them
+                    if (cachedFull.size > currentResults.size) {
+                        val nextFive = cachedFull.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
+                        _searchResults.value = currentResults + nextFive
+                        _hasMore.value = cachedFull.size > (currentResults.size + 5) || page != null
+                        _isLoading.value = false
+                        return@launch
+                    }
+
+                    if (page == null) {
+                        _hasMore.value = false
+                        _isLoading.value = false
+                        return@launch
+                    }
+
                     val moreInfo = ChannelTabInfo.getMoreItems(ServiceList.YouTube, currentListLinkHandler!!, page)
                     currentNextPage = moreInfo.nextPage
-                    _hasMore.value = moreInfo.nextPage != null
                     val moreResults = moreInfo.items.map { item ->
+                        val streamItem = item as? StreamInfoItem
                         val name = item.name ?: "Unknown"
-                        val pubDate = (item as? StreamInfoItem)?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
-                        val res = SearchResult(name = name, url = item.url ?: "", isVideo = item is StreamInfoItem, uploaderName = (item as? StreamInfoItem)?.uploaderName ?: sub.name, duration = (item as? StreamInfoItem)?.duration ?: -1L, pubDate = pubDate)
-                        syncResultStatus(context, res)
+                        val pubDate = streamItem?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
+                        SearchResult(
+                            name = name, 
+                            url = item.url ?: "", 
+                            isVideo = item is StreamInfoItem, 
+                            uploaderName = streamItem?.uploaderName ?: sub.name, 
+                            duration = streamItem?.duration ?: -1L, 
+                            pubDate = pubDate,
+                            textualDate = streamItem?.textualUploadDate
+                        )
                     }
-                    val newList = (currentResults + moreResults).sortedByDescending { it.pubDate }
-                    _searchResults.value = newList
-                    channelCache[sub.url] = newList
+                    val combined = cachedFull + moreResults
+                    val syncedMore = combined.sortedByDescending { it.pubDate }.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
+                    _searchResults.value = currentResults + syncedMore
+                    channelCache[sub.url] = combined
+                    _hasMore.value = moreResults.size > 5 || moreInfo.nextPage != null
                 }
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
@@ -484,19 +538,21 @@ class MainViewModel : ViewModel() {
             _isLoading.value = true
             try {
                 val results = RssParser.fetchRssItems(url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }
-                rssOriginalItems[url] = results.map { Triple(it, it.pubDate, it.url) }
-                val displayList = results.take(10).map { syncResultStatus(context, it) }
+                rssOriginalItems[url] = results.map { Triple<SearchResult, Long, String?>(it, it.pubDate, it.url) }
+                val displayList = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = displayList
                 channelCache[url] = results
                 StorageManager.saveChannelCache(context, channelCache)
-                _hasMore.value = results.size > 10
+                _hasMore.value = results.size > 5
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
     }
 
     fun refreshDownloadStatus(context: Context) {
-        _searchResults.value = _searchResults.value.map { syncResultStatus(context, it) }
-        _downloadedFiles.value = _downloadedFiles.value.map { syncResultStatus(context, it) }
+        viewModelScope.launch {
+            _searchResults.value = _searchResults.value.map { syncResultStatus(context, it) }
+            _downloadedFiles.value = _downloadedFiles.value.map { syncResultStatus(context, it) }
+        }
     }
 
     fun startDownload(context: Context, result: SearchResult) {
@@ -508,7 +564,7 @@ class MainViewModel : ViewModel() {
             val audioUrl = getAudioUrl(context, result)
             if (audioUrl != null) {
                 val sanitizedName = DownloadManagerHelper.sanitizeFilename(result.name)
-                StorageManager.saveDownloadMetadata(context, sanitizedName, result.uploaderName, result.isRss)
+                StorageManager.saveDownloadMetadata(context, sanitizedName, result)
                 
                 val downloadId = DownloadManagerHelper.enqueueDownload(context, result, audioUrl, _allowMobileData.value)
                 
@@ -591,29 +647,37 @@ class MainViewModel : ViewModel() {
                 
                 // 1. Prioritize ORIGINAL audio tracks
                 val originalStreams = audioStreams.filter { it.audioTrackType == AudioTrackType.ORIGINAL }
+                val candidates = if (originalStreams.isNotEmpty()) originalStreams else audioStreams
                 
-                // 2. If no ORIGINAL, try to find English tracks
-                val englishStreams = audioStreams.filter { it.audioLocale?.language == "en" }
+                // 2. Filter out dubbed tracks if possible
+                val nonDubbed = candidates.filter { it.audioTrackType != AudioTrackType.DUBBED }
+                val pool = if (nonDubbed.isNotEmpty()) nonDubbed else candidates
+
+                // 3. For YouTube, prioritize PROGRESSIVE streams (better for simple downloading/seeking)
+                // Use reflection to avoid direct DeliveryMethod enum reference issues in some builds
+                val progressive = pool.filter { 
+                    try {
+                        val method = it.javaClass.getMethod("getDeliveryMethod")
+                        method.invoke(it).toString() == "PROGRESSIVE"
+                    } catch (e: Exception) { false }
+                }
+                val finalPool = if (progressive.isNotEmpty()) progressive else pool
                 
-                // 3. Candidates: Prefer Original, then English, then anything NOT dubbed
-                val candidates = when {
-                    originalStreams.isNotEmpty() -> originalStreams
-                    englishStreams.isNotEmpty() -> englishStreams
-                    else -> audioStreams.filter { it.audioTrackType != AudioTrackType.DUBBED }
-                }.ifEmpty { audioStreams }
-                
-                // 4. Within candidates, prioritize M4A format
-                val m4aStreams = candidates.filter { it.format?.suffix == "m4a" }
+                // 4. Prioritize M4A format within the candidates
+                val m4aStreams = finalPool.filter { it.format?.suffix == "m4a" }
                 val targetBitrate = 160000 // 160 kbps balance
                 
                 val bestStream = if (m4aStreams.isNotEmpty()) {
                     m4aStreams.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
                 } else {
-                    candidates.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                    finalPool.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
                 }
                 
                 bestStream?.content
-            } catch (e: Exception) { e.printStackTrace() ; null }
+            } catch (e: Exception) { 
+                e.printStackTrace()
+                null 
+            }
         }
     }
 
@@ -646,6 +710,11 @@ class MainViewModel : ViewModel() {
 
     fun getSavedPosition(context: Context, name: String): Long {
         return StorageManager.loadPlaybackPosition(context, name)
+    }
+
+    suspend fun fetchFullDescription(result: SearchResult): String? {
+        if (result.isRss) return result.description
+        return YouTubeManager.fetchFullDescription(result.url)
     }
 
     fun setPlaybackSpeed(speed: Float) {

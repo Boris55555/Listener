@@ -78,8 +78,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 .border(1.dp, Color.Black)
                 .padding(12.dp)
         ) {
-            Text("Storage Location", fontWeight = FontWeight.Bold)
-            Text(viewModel.getDownloadPathName(context), style = MaterialTheme.typography.bodySmall)
+            Text("Storage Location", fontWeight = FontWeight.Bold, color = Color.Black)
+            Text(viewModel.getDownloadPathName(context), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = { folderLauncher.launch(null) },
@@ -87,7 +87,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
                 shape = RectangleShape
             ) {
-                Text("SELECT FOLDER")
+                Text("SELECT FOLDER", fontWeight = FontWeight.Bold)
             }
         }
 
@@ -101,7 +101,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 .border(1.dp, Color.Black)
                 .padding(12.dp)
         ) {
-            Text("Refresh interval", fontWeight = FontWeight.Bold)
+            Text("Refresh interval", fontWeight = FontWeight.Bold, color = Color.Black)
             
             var expanded by remember { mutableStateOf(false) }
             
@@ -112,7 +112,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                     shape = RectangleShape,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
                 ) {
-                    Text(currentSetting.label)
+                    Text(currentSetting.label, fontWeight = FontWeight.Bold)
                 }
                 
                 DropdownMenu(
@@ -122,7 +122,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 ) {
                     RefreshSetting.entries.forEach { setting ->
                         DropdownMenuItem(
-                            text = { Text(setting.label, color = Color.Black) },
+                            text = { Text(setting.label, color = Color.Black, fontWeight = FontWeight.Bold) },
                             onClick = {
                                 viewModel.setRefreshSetting(context, setting)
                                 expanded = false
@@ -149,8 +149,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Show notifications", fontWeight = FontWeight.Bold)
-                        Text("Notify about new episodes in background", style = MaterialTheme.typography.bodySmall)
+                        Text("Show notifications", fontWeight = FontWeight.Bold, color = Color.Black)
+                        Text("Notify about new episodes in background", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
                     }
                     Switch(
                         checked = showNotifications,
@@ -186,7 +186,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
                     shape = RectangleShape
                 ) {
-                    Text("EXPORT")
+                    Text("EXPORT", fontWeight = FontWeight.Bold)
                 }
                 Button(
                     onClick = { importLauncher.launch(arrayOf("application/json", "application/octet-stream")) },
@@ -194,7 +194,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
                     shape = RectangleShape
                 ) {
-                    Text("IMPORT")
+                    Text("IMPORT", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -213,8 +213,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Show YouTube Live", fontWeight = FontWeight.Bold)
-                    Text("Include live streams in channel feeds", style = MaterialTheme.typography.bodySmall)
+                    Text("Show YouTube Live", fontWeight = FontWeight.Bold, color = Color.Black)
+                    Text("Include live streams in channel feeds", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
                 Switch(
                     checked = showYtLive,
@@ -246,8 +246,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Allow Mobile Data", fontWeight = FontWeight.Bold)
-                    Text("Use mobile data for updates, streaming and downloads", style = MaterialTheme.typography.bodySmall)
+                    Text("Allow Mobile Data", fontWeight = FontWeight.Bold, color = Color.Black)
+                    Text("Use mobile data for updates, streaming and downloads", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
                 Switch(
                     checked = allowMobileData,
@@ -309,7 +309,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
             shape = RectangleShape
         ) {
-            Text("BACK")
+            Text("BACK", fontWeight = FontWeight.Bold)
         }
         
         Spacer(modifier = Modifier.height(32.dp))
@@ -331,35 +331,35 @@ fun PermissionItem(
             .padding(12.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+            Text(name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, color = Color.Black)
             Text(
                 if (isGranted) "GRANTED" else "NOT GRANTED",
                 fontWeight = FontWeight.Bold,
                 color = Color.Black
             )
         }
-        Text(description, style = MaterialTheme.typography.bodySmall)
+        Text(description, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
         if (!isGranted) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onRequest != null) {
                     Button(
                         onClick = onRequest,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                        modifier = Modifier.weight(1f).border(1.dp, Color.Black),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                         shape = RectangleShape
                     ) {
-                        Text("REQUEST")
+                        Text("REQUEST", fontWeight = FontWeight.Bold)
                     }
                 }
                 if (onOpenSettings != null) {
-                    OutlinedButton(
+                    Button(
                         onClick = onOpenSettings,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).border(1.dp, Color.Black),
                         shape = RectangleShape,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Text("SETTINGS")
+                        Text("SETTINGS", fontWeight = FontWeight.Bold)
                     }
                 }
             }

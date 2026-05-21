@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 
@@ -68,7 +69,7 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
                         selected = currentScreen == Screen.SUBSCRIPTIONS,
                         onClick = { currentScreen = Screen.SUBSCRIPTIONS },
                         icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                        label = { Text("SUBSCRIPTIONS") },
+                        label = { Text("SUBSCRIPTIONS", fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color.White,
                             selectedTextColor = Color.Black,
@@ -81,7 +82,7 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
                         selected = currentScreen == Screen.DOWNLOADED,
                         onClick = { currentScreen = Screen.DOWNLOADED },
                         icon = { Icon(Icons.Default.Download, contentDescription = null) },
-                        label = { Text("DOWNLOADS") },
+                        label = { Text("DOWNLOADS", fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color.White,
                             selectedTextColor = Color.Black,
@@ -94,7 +95,7 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
                         selected = currentScreen == Screen.SETTINGS,
                         onClick = { currentScreen = Screen.SETTINGS },
                         icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                        label = { Text("SETTINGS") },
+                        label = { Text("SETTINGS", fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color.White,
                             selectedTextColor = Color.Black,
@@ -121,7 +122,8 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
                     onSubscriptionClick = { sub ->
                         viewModel.loadChannelVideos(context, sub)
                         currentScreen = Screen.SEARCH
-                    }
+                    },
+                    onUnfollowClick = { url -> viewModel.unfollow(context, url) }
                 )
                 Screen.DOWNLOADED -> DownloadedScreen(
                     onBack = { currentScreen = Screen.SUBSCRIPTIONS },

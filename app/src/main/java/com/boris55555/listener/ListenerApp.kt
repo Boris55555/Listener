@@ -8,22 +8,40 @@ import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.localization.ContentCountry
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class ListenerApp : Application() {
+    companion object {
+        const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    }
+
     override fun onCreate() {
         super.onCreate()
-        // Set default content language to English (US) and content country to US
-        NewPipe.init(SimpleDownloader(), Localization("en", "US"), ContentCountry("US"))
+        // Initialize NewPipe with US English to maximize extraction compatibility
+        NewPipe.init(SimpleDownloader(), Localization.DEFAULT, ContentCountry.DEFAULT)
     }
 }
 
 class SimpleDownloader : Downloader() {
-    private val client = OkHttpClient.Builder().build()
-    private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .cookieJar(object : CookieJar {
+            private val cookieStore = HashMap<String, List<Cookie>>()
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                cookieStore[url.host] = cookies
+            }
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                return cookieStore[url.host] ?: ArrayList()
+            }
+        })
+        .build()
 
     override fun execute(request: Request): Response {
         val httpMethod = request.httpMethod()
@@ -31,15 +49,15 @@ class SimpleDownloader : Downloader() {
         val headers = request.headers()
         val dataToSend = request.dataToSend()
 
-        var requestBody = dataToSend?.toRequestBody(null)
+        val requestBody = dataToSend?.toRequestBody(null)
 
         val requestBuilder = okhttp3.Request.Builder()
             .method(httpMethod, requestBody)
             .url(url)
-            .addHeader("User-Agent", USER_AGENT)
+            .addHeader("User-Agent", ListenerApp.USER_AGENT)
+            .addHeader("Accept-Language", "en-US,en;q=0.9")
 
         headers.forEach { (headerName, headerValueList) ->
-            requestBuilder.removeHeader(headerName)
             headerValueList.forEach { headerValue ->
                 requestBuilder.addHeader(headerName, headerValue)
             }

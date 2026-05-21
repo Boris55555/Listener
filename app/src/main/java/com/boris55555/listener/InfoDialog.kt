@@ -1,9 +1,16 @@
 package com.boris55555.listener
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -11,14 +18,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-
 @Composable
 fun InfoDialog(
     result: SearchResult,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    viewModel: MainViewModel? = null
 ) {
+    var description by remember { mutableStateOf(result.description) }
+    var isLoadingDescription by remember { mutableStateOf(false) }
+
+    LaunchedEffect(result) {
+        if (viewModel != null && !result.isRss && result.isVideo) {
+            isLoadingDescription = true
+            val full = viewModel.fetchFullDescription(result)
+            if (full != null) description = full
+            isLoadingDescription = false
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
@@ -33,16 +50,34 @@ fun InfoDialog(
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Text(
-                    text = "FILE INFO",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "FILE INFO",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.Black)
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 InfoRow("Name", result.name)
                 InfoRow("Channel", result.uploaderName ?: "Unknown")
+                if (result.pubDate > 0 || !result.textualDate.isNullOrEmpty()) {
+                    val dateText = if (result.pubDate > 0) {
+                        val sdf = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.US)
+                        sdf.format(java.util.Date(result.pubDate))
+                    } else {
+                        result.textualDate ?: "Unknown date"
+                    }
+                    InfoRow("Published", dateText)
+                }
                 if (result.duration > 0) {
                     val minutes = result.duration / 60
                     val seconds = result.duration % 60
@@ -53,18 +88,21 @@ fun InfoDialog(
                     InfoRow("Size", result.totalSize)
                 }
 
-                if (!result.description.isNullOrBlank()) {
-                    val truncatedDescription = if (result.description.length > 500) {
-                        result.description.take(500) + "..."
+                if (isLoadingDescription) {
+                    CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(24.dp).padding(vertical = 8.dp))
+                } else if (!description.isNullOrBlank()) {
+                    val truncatedDescription = if (description!!.length > 2000) {
+                        description!!.take(2000) + "..."
                     } else {
-                        result.description
+                        description!!
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(text = "Description", style = MaterialTheme.typography.titleMedium, color = Color.Black, fontWeight = FontWeight.Bold)
                     Text(
                         text = truncatedDescription,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = Color.Black
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 
@@ -72,11 +110,11 @@ fun InfoDialog(
                 
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().height(56.dp).border(1.dp, Color.Black),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                     shape = RectangleShape
                 ) {
-                    Text("CLOSE", style = MaterialTheme.typography.titleMedium)
+                    Text("CLOSE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -87,6 +125,6 @@ fun InfoDialog(
 fun InfoRow(label: String, value: String) {
     Column(modifier = Modifier.padding(vertical = 6.dp)) {
         Text(text = label, style = MaterialTheme.typography.titleMedium, color = Color.Black, fontWeight = FontWeight.Bold)
-        Text(text = value, style = MaterialTheme.typography.bodyLarge, color = Color.Black)
+        Text(text = value, style = MaterialTheme.typography.bodyLarge, color = Color.Black, fontWeight = FontWeight.Bold)
     }
 }

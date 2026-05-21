@@ -26,8 +26,8 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
-    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val prefs = applicationContext.getSharedPreferences("listener_prefs", Context.MODE_PRIVATE)
@@ -57,26 +57,20 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 try {
                     val (latestUrl, latestTitle) = if (sub.type == "RSS") {
                         try {
-                            val request = Request.Builder().url(sub.url).header("User-Agent", USER_AGENT).build()
+                            val request = Request.Builder().url(sub.url).header("User-Agent", ListenerApp.USER_AGENT).build()
                             val response = httpClient.newCall(request).execute()
                             val body = response.body?.string() ?: ""
                             val doc = Jsoup.parse(body, "", Parser.xmlParser())
                             val item = doc.select("item").first()
-                            val url = item?.select("enclosure")?.attr("url")
+                            val url = item?.select("enclosure")?.attr("url") ?: item?.select("link")?.text()
                             val title = item?.select("title")?.text()
                             Pair(url, title)
                         } catch (e: Exception) { Pair(null, null) }
                     } else {
                         val service = ServiceList.YouTube
-                        val channelInfo = ChannelInfo.getInfo(service, sub.url)
-                        val videosTab = channelInfo.tabs.find { 
-                            it.contentFilters.getOrNull(0)?.contains("video", ignoreCase = true) == true 
-                        } ?: channelInfo.tabs.firstOrNull()
-                        if (videosTab != null) {
-                            val tabInfo = ChannelTabInfo.getInfo(service, videosTab)
-                            val item = tabInfo.relatedItems.firstOrNull()
-                            Pair(item?.url, item?.name)
-                        } else Pair(null, null)
+                        val container = YouTubeManager.fetchChannelInitial(sub.url, false, sub.name)
+                        val item = container.results.firstOrNull()
+                        Pair(item?.url, item?.name)
                     }
 
                     if (latestUrl != null && latestUrl != sub.latestItemUrl) {

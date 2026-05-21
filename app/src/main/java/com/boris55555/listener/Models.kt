@@ -31,7 +31,8 @@ data class SearchResult(
     val isRss: Boolean = false,
     val isLive: Boolean = false,
     val source: String = "YOUTUBE",
-    val pubDate: Long = 0
+    val pubDate: Long = 0,
+    val textualDate: String? = null
 )
 
 data class Subscription(
@@ -39,7 +40,8 @@ data class Subscription(
     val url: String, 
     val type: String = "YOUTUBE",
     val lastUpdated: Long = 0,
-    val latestItemUrl: String? = null
+    val latestItemUrl: String? = null,
+    val latestItemPubDate: Long = 0
 )
 
 data class PlaybackInfo(

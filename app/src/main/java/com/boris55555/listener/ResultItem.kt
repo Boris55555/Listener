@@ -1,6 +1,7 @@
 package com.boris55555.listener
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -24,9 +25,10 @@ fun ResultItem(
     onDelete: () -> Unit,
     onFollow: () -> Unit,
     onClick: () -> Unit,
-    onInfoClick: () -> Unit
+    onInfoClick: () -> Unit,
+    showSource: Boolean = true
 ) {
-    val dateFormatter = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
+    val dateFormatter = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US) }
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(
@@ -38,6 +40,16 @@ fun ResultItem(
                 val displayText = buildString {
                     if (!result.isVideo) append("CHANNEL: ")
                     append(result.name)
+                    
+                    if (showSource) {
+                        val sourceText = when (result.source) {
+                            "YOUTUBE" -> " (YouTube)"
+                            "RSS" -> " (Podcast)"
+                            else -> ""
+                        }
+                        append(sourceText)
+                    }
+
                     if (result.isDownloaded && result.totalSize != null) {
                         append(" (")
                         append(result.totalSize)
@@ -48,7 +60,8 @@ fun ResultItem(
                     text = displayText,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.Black
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold
                 )
                 if (result.isDownloaded) {
                     Box(
@@ -75,59 +88,69 @@ fun ResultItem(
                         color = Color.Black,
                         fontWeight = FontWeight.Bold
                     )
-                } else if (result.pubDate > 0) {
+                } else {
                     val label = if (result.isLive) "Streamed on: " else "Published: "
-                    Text(
-                        text = label + dateFormatter.format(Date(result.pubDate)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Black // Changed from Gray for e-ink
-                    )
+                    val dateText = when {
+                        result.pubDate > 0 -> try {
+                            dateFormatter.format(Date(result.pubDate))
+                        } catch (e: Exception) { result.textualDate }
+                        !result.textualDate.isNullOrEmpty() -> result.textualDate
+                        else -> null
+                    }
+                    
+                    if (dateText != null) {
+                        Text(
+                            text = label + dateText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             if (result.isVideo) {
-                // Only show Listen button if not downloading
                 if (!result.isDownloading) {
-                    OutlinedButton(
+                    Button(
                         onClick = onPlay,
-                        modifier = Modifier.weight(1f).padding(end = 4.dp),
+                        modifier = Modifier.weight(1f).padding(end = 4.dp).border(1.dp, Color.Black),
                         shape = RectangleShape,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Text("LISTEN")
+                        Text("LISTEN", fontWeight = FontWeight.Bold)
                     }
                 }
 
                 if (result.isDownloaded || result.isDownloading) {
-                    OutlinedButton(
+                    Button(
                         onClick = onDelete,
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
                         shape = RectangleShape,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Text(if (result.isDownloading) "CANCEL" else "DELETE")
+                        Text(if (result.isDownloading) "CANCEL" else "DELETE", fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    OutlinedButton(
+                    Button(
                         onClick = onDownload,
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
                         enabled = !result.isDownloading,
                         shape = RectangleShape,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Text("DOWNLOAD")
+                        Text("DOWNLOAD", fontWeight = FontWeight.Bold)
                     }
                 }
             } else {
-                OutlinedButton(
+                Button(
                     onClick = onFollow,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).border(1.dp, Color.Black),
                     shape = RectangleShape,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                 ) {
-                    Text(if (result.isFollowed) "UNSUBSCRIBE" else "SUBSCRIBE")
+                    Text(if (result.isFollowed) "UNSUBSCRIBE" else "SUBSCRIBE", fontWeight = FontWeight.Bold)
                 }
             }
         }

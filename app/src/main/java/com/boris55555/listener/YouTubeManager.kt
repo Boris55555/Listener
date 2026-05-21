@@ -1,11 +1,12 @@
 package com.boris55555.listener
 
-import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
+import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -23,69 +24,101 @@ object YouTubeManager {
         val searchInfo = SearchInfo.getInfo(service, searchQH)
         
         val results = searchInfo.relatedItems.map { item ->
+            val streamItem = item as? StreamInfoItem
+            val pubDate = streamItem?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
             SearchResult(
                 name = item.name ?: "Unknown",
                 url = item.url ?: "",
                 isVideo = item is StreamInfoItem,
-                uploaderName = (item as? StreamInfoItem)?.uploaderName,
-                duration = (item as? StreamInfoItem)?.duration ?: -1L,
-                description = (item as? StreamInfoItem)?.shortDescription,
-                source = "YOUTUBE"
+                uploaderName = streamItem?.uploaderName,
+                duration = streamItem?.duration ?: -1L,
+                description = streamItem?.shortDescription,
+                source = "YOUTUBE",
+                pubDate = pubDate,
+                textualDate = streamItem?.textualUploadDate
             )
         }
-        SearchResultContainer(results, searchInfo.nextPage)
+        SearchResultContainer(results, searchInfo.nextPage, null)
     }
 
-    suspend fun fetchChannelItems(url: String, showLive: Boolean, subscriptionName: String): List<SearchResult> = withContext(Dispatchers.IO) {
+    suspend fun fetchChannelInitial(url: String, showLive: Boolean, subscriptionName: String): SearchResultContainer = withContext(Dispatchers.IO) {
         try {
             val service = ServiceList.YouTube
             val channelInfo = ChannelInfo.getInfo(service, url)
             
-            val tabsToFetch = mutableListOf<String>()
-            tabsToFetch.add("videos")
-            if (showLive) {
-                tabsToFetch.add("livestreams")
+            val tabs = channelInfo.tabs
+            if (tabs.isEmpty()) {
+                return@withContext SearchResultContainer(emptyList(), null, null)
             }
 
             val allItems = mutableListOf<SearchResult>()
+            var lastNextPage: Page? = null
+            var firstTabHandler: ListLinkHandler? = null
             
-            channelInfo.tabs.filter { tab ->
-                tabsToFetch.any { filter -> tab.contentFilters.getOrNull(0)?.equals(filter, ignoreCase = true) == true }
-            }.forEach { tab ->
-                val tabInfo = ChannelTabInfo.getInfo(service, tab)
-                val isLiveTab = tab.contentFilters.getOrNull(0)?.equals("livestreams", ignoreCase = true) == true
-                val now = System.currentTimeMillis()
-                tabInfo.relatedItems.forEach { item ->
-                    val name = item.name ?: "Unknown"
-                    val pubDate = (item as? StreamInfoItem)?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
+            // Refined tab detection for latest YouTube layout
+            val tabsToFetch = tabs.filter { tab ->
+                val tabUrl = tab.url ?: ""
+                val url_ = tabUrl.lowercase()
+                url_.endsWith("/videos") || 
+                url_.endsWith("/shorts") || 
+                url_.contains("/streams") ||
+                tab.contentFilters.any { it.contains("video", true) || it.contains("short", true) || (showLive && it.contains("stream", true)) }
+            }.ifEmpty { listOf(tabs.first()) }
+
+            tabsToFetch.forEach { tab ->
+                try {
+                    if (firstTabHandler == null) firstTabHandler = tab
+                    val tabInfo = ChannelTabInfo.getInfo(service, tab)
+                    if (lastNextPage == null) lastNextPage = tabInfo.nextPage
                     
-                    if (isLiveTab && pubDate > now) return@forEach
+                    val tabUrl = tab.url ?: ""
+                    val isLiveTab = tabUrl.lowercase().contains("streams")
+                    val now = System.currentTimeMillis()
                     
-                    allItems.add(SearchResult(
-                        name = name,
-                        url = item.url ?: "",
-                        isVideo = item is StreamInfoItem,
-                        uploaderName = (item as? StreamInfoItem)?.uploaderName ?: subscriptionName,
-                        duration = (item as? StreamInfoItem)?.duration ?: -1L,
-                        description = (item as? StreamInfoItem)?.shortDescription,
-                        pubDate = pubDate,
-                        isLive = isLiveTab
-                    ))
-                }
+                    tabInfo.relatedItems.forEach { item ->
+                        val streamItem = item as? StreamInfoItem
+                        val name = item.name ?: "Unknown"
+                        val pubDate = streamItem?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
+                        
+                        if (isLiveTab && pubDate > now + 3600000) return@forEach 
+                        
+                        allItems.add(SearchResult(
+                            name = name,
+                            url = item.url ?: "",
+                            isVideo = item is StreamInfoItem,
+                            uploaderName = streamItem?.uploaderName ?: subscriptionName,
+                            duration = streamItem?.duration ?: -1L,
+                            description = streamItem?.shortDescription,
+                            pubDate = pubDate,
+                            isLive = isLiveTab,
+                            textualDate = streamItem?.textualUploadDate
+                        ))
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
             }
-            allItems.sortedByDescending { it.pubDate }
+            
+            SearchResultContainer(allItems.sortedByDescending { it.pubDate }, lastNextPage, firstTabHandler)
         } catch (e: Exception) {
-            emptyList()
+            e.printStackTrace()
+            SearchResultContainer(emptyList(), null, null)
         }
     }
 
-    suspend fun getStreamInfo(url: String) = withContext(Dispatchers.IO) {
+    suspend fun getStreamInfo(url: String): StreamInfo = withContext(Dispatchers.IO) {
         val service = ServiceList.YouTube
         StreamInfo.getInfo(service, url)
+    }
+
+    suspend fun fetchFullDescription(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val info = getStreamInfo(url)
+            info.description.content
+        } catch (e: Exception) { null }
     }
 }
 
 data class SearchResultContainer(
     val results: List<SearchResult>,
-    val nextPage: org.schabi.newpipe.extractor.Page?
+    val nextPage: Page?,
+    val linkHandler: ListLinkHandler?
 )

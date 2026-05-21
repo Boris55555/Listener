@@ -55,7 +55,8 @@ object StorageManager {
                 val type = if (parts.size > 2) parts[2] else "YOUTUBE"
                 val lastUpdated = if (parts.size > 3) parts[3].toLongOrNull() ?: 0L else 0L
                 val latestItemUrl = if (parts.size > 4) parts[4] else null
-                Subscription(parts[0], parts[1], type, lastUpdated, latestItemUrl)
+                val latestItemPubDate = if (parts.size > 5) parts[5].toLongOrNull() ?: 0L else 0L
+                Subscription(parts[0], parts[1], type, lastUpdated, latestItemUrl, latestItemPubDate)
             }
         } catch (e: Exception) {
             emptyList()
@@ -64,9 +65,10 @@ object StorageManager {
 
     fun saveSubscriptions(context: Context, subs: List<Subscription>) {
         val file = File(context.filesDir, SUBSCRIPTION_FILE)
-        val sorted = subs.sortedByDescending { it.lastUpdated }
+        // Sort by the actual content date, fallback to update date
+        val sorted = subs.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
         val content = sorted.joinToString("\n") { 
-            "${it.name}|${it.url}|${it.type}|${it.lastUpdated}|${it.latestItemUrl ?: ""}" 
+            "${it.name}|${it.url}|${it.type}|${it.lastUpdated}|${it.latestItemUrl ?: ""}|${it.latestItemPubDate}"
         }
         file.writeText(content)
     }
@@ -100,7 +102,7 @@ object StorageManager {
         return results
     }
 
-    fun saveDownloadMetadata(context: Context, fileName: String, uploaderName: String?, isRss: Boolean) {
+    fun saveDownloadMetadata(context: Context, fileName: String, result: SearchResult) {
         try {
             val file = File(context.filesDir, DOWNLOAD_METADATA_FILE)
             val json = if (file.exists()) {
@@ -108,8 +110,13 @@ object StorageManager {
             } else JSONObject()
             
             val item = JSONObject()
-            item.put("uploader", uploaderName ?: "Unknown")
-            item.put("isRss", isRss)
+            item.put("uploader", result.uploaderName ?: "Unknown")
+            item.put("isRss", result.isRss)
+            item.put("desc", result.description ?: "")
+            item.put("duration", result.duration)
+            item.put("url", result.url)
+            item.put("pubDate", result.pubDate)
+            item.put("textualDate", result.textualDate ?: "")
             json.put(fileName, item)
             
             file.writeText(json.toString())
@@ -118,15 +125,25 @@ object StorageManager {
         }
     }
 
-    fun loadAllDownloadMetadata(context: Context): Map<String, Pair<String, Boolean>> {
+    fun loadAllDownloadMetadata(context: Context): Map<String, SearchResult> {
         val file = File(context.filesDir, DOWNLOAD_METADATA_FILE)
         if (!file.exists()) return emptyMap()
         return try {
             val json = JSONObject(file.readText())
-            val map = mutableMapOf<String, Pair<String, Boolean>>()
+            val map = mutableMapOf<String, SearchResult>()
             json.keys().forEach { fileName ->
                 val item = json.getJSONObject(fileName)
-                map[fileName] = Pair(item.getString("uploader"), item.getBoolean("isRss"))
+                map[fileName] = SearchResult(
+                    name = fileName,
+                    url = item.optString("url", ""),
+                    isVideo = true,
+                    uploaderName = item.optString("uploader", "Unknown"),
+                    isRss = item.optBoolean("isRss", false),
+                    description = item.optString("desc", ""),
+                    duration = item.optLong("duration", -1L),
+                    pubDate = item.optLong("pubDate", 0L),
+                    textualDate = item.optString("textualDate").takeIf { it.isNotEmpty() }
+                )
             }
             map
         } catch (e: Exception) {
@@ -164,6 +181,7 @@ object StorageManager {
                     item.put("isLive", res.isLive)
                     item.put("source", res.source)
                     item.put("pubDate", res.pubDate)
+                    item.put("textualDate", res.textualDate ?: "")
                     array.put(item)
                 }
                 json.put(url, array)
@@ -195,7 +213,8 @@ object StorageManager {
                         isRss = item.optBoolean("isRss", false),
                         isLive = item.optBoolean("isLive", false),
                         source = item.optString("source", "YOUTUBE"),
-                        pubDate = item.optLong("pubDate", 0L)
+                        pubDate = item.optLong("pubDate", 0L),
+                        textualDate = item.optString("textualDate").takeIf { it.isNotEmpty() }
                     ))
                 }
                 cache[url] = list

@@ -125,7 +125,7 @@ fun PlayerBar(
                             contentColor = if (isSelected) Color.White else Color.Black,
                             shape = RectangleShape
                         ) {
-                            Text(text = "${speed}x", modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            Text(text = "${speed}x", modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                         Spacer(modifier = Modifier.width(2.dp))
                     }

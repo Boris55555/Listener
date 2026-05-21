@@ -68,7 +68,7 @@ fun DownloadedScreen(
     BackHandler(onBack = onBack)
     
     if (infoResult != null) {
-        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null })
+        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null }, viewModel = viewModel)
     }
 
     LaunchedEffect(Unit) {
@@ -76,11 +76,11 @@ fun DownloadedScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("DOWNLOADS", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("DOWNLOADS", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.Black)
         Spacer(modifier = Modifier.height(16.dp))
         
         if (results.isEmpty()) {
-            Text("No downloaded files.", color = Color.Black)
+            Text("No downloaded files.", color = Color.Black, fontWeight = FontWeight.Bold)
         } else {
             val listState = rememberLazyListState()
             val showUpArrow by remember { derivedStateOf { listState.canScrollBackward } }
@@ -113,7 +113,7 @@ fun DownloadedScreen(
                     // Check if it's still in results (not deleted) by matching NAME
                     if (results.any { it.name == lp.name }) {
                         item {
-                            Text("LAST PLAYED", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.Black)
+                            Text("LAST PLAYED", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.Black)
                             Spacer(modifier = Modifier.height(8.dp))
                             ResultItem(
                                 result = lp,

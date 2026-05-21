@@ -55,7 +55,7 @@ fun SearchScreen(
     BackHandler(onBack = onBack)
 
     if (infoResult != null) {
-        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null })
+        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null }, viewModel = viewModel)
     }
 
     // Register receiver to refresh status when download finishes
@@ -94,8 +94,9 @@ fun SearchScreen(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.weight(1f).border(2.dp, Color.Black),
-                    placeholder = { Text("Find listening...") },
+                    placeholder = { Text("Find listening...", fontWeight = FontWeight.Bold) },
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
@@ -129,7 +130,7 @@ fun SearchScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
                 shape = RectangleShape
             ) {
-                Text("SEARCH", style = MaterialTheme.typography.labelLarge)
+                Text("SEARCH", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             }
         } else {
             // Subscription View Mode
@@ -148,7 +149,7 @@ fun SearchScreen(
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.headlineSmall.copy(
+                    style = MaterialTheme.typography.headlineMedium.copy( // Larger as requested
                         fontWeight = FontWeight.Bold,
                         textDecoration = TextDecoration.Underline
                     ),
@@ -197,6 +198,7 @@ fun SearchScreen(
             items(results) { result ->
                 ResultItem(
                     result = result,
+                    showSource = currentSubscription == null,
                     onPlay = {
                         scope.launch {
                             val localUri = viewModel.getLocalUri(context, result.name)
@@ -279,16 +281,21 @@ fun SearchScreen(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color.Black)
             }
             
-            if (hasMore && !isLoading) {
+            if (hasMore && !isLoading && results.isNotEmpty()) {
                 item {
                     Button(
                         onClick = { viewModel.loadMore(context) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                        border = BorderStroke(1.dp, Color.Black),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp)
+                            .border(2.dp, Color.Black), // Thicker border
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Black
+                        ),
                         shape = RectangleShape
                     ) {
-                        Text("MORE...")
+                        Text("MORE (+5)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -327,7 +334,8 @@ fun FilterButton(text: String, selected: Boolean, onClick: () -> Unit) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
         )
     }
 }

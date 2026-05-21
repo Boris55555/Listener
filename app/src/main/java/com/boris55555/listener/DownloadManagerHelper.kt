@@ -70,7 +70,7 @@ object DownloadManagerHelper {
         return false
     }
 
-    fun getDownloadedAndActiveFiles(context: Context, metadata: Map<String, Pair<String, Boolean>>): List<SearchResult> {
+    fun getDownloadedAndActiveFiles(context: Context, metadata: Map<String, SearchResult>): List<SearchResult> {
         val results = mutableListOf<SearchResult>()
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
@@ -88,9 +88,11 @@ object DownloadManagerHelper {
                             url = file.uri.toString(),
                             isVideo = true,
                             isDownloaded = true,
-                            uploaderName = meta?.first ?: "Unknown",
-                            isRss = meta?.second ?: false,
-                            source = if (meta?.second == true) "RSS" else "YOUTUBE",
+                            uploaderName = meta?.uploaderName ?: "Unknown",
+                            isRss = meta?.isRss ?: false,
+                            description = meta?.description ?: "",
+                            duration = meta?.duration ?: -1L,
+                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
                             totalSize = StorageManager.formatFileSize(file.length()),
                             pubDate = file.lastModified()
                         ))
@@ -112,9 +114,11 @@ object DownloadManagerHelper {
                             url = Uri.fromFile(file).toString(),
                             isVideo = true,
                             isDownloaded = true,
-                            uploaderName = meta?.first ?: "Unknown",
-                            isRss = meta?.second ?: false,
-                            source = if (meta?.second == true) "RSS" else "YOUTUBE",
+                            uploaderName = meta?.uploaderName ?: "Unknown",
+                            isRss = meta?.isRss ?: false,
+                            description = meta?.description ?: "",
+                            duration = meta?.duration ?: -1L,
+                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
                             totalSize = StorageManager.formatFileSize(file.length()),
                             pubDate = file.lastModified()
                         ))
@@ -147,15 +151,17 @@ object DownloadManagerHelper {
 
                         results.add(SearchResult(
                             name = title,
-                            url = "",
+                            url = meta?.url ?: "",
                             isVideo = true,
                             isDownloaded = false,
                             isDownloading = true,
                             downloadId = id,
                             downloadProgress = progress,
-                            uploaderName = meta?.first ?: "Unknown",
-                            isRss = meta?.second ?: false,
-                            source = if (meta?.second == true) "RSS" else "YOUTUBE",
+                            uploaderName = meta?.uploaderName ?: "Unknown",
+                            isRss = meta?.isRss ?: false,
+                            description = meta?.description ?: "",
+                            duration = meta?.duration ?: -1L,
+                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
                             totalSize = if (total > 0) StorageManager.formatFileSize(total) else null,
                             pubDate = System.currentTimeMillis() // Show at top
                         ))
@@ -174,7 +180,7 @@ object DownloadManagerHelper {
         val request = DownloadManager.Request(Uri.parse(audioUrl))
             .setTitle(result.name)
             .setDescription("Downloading audio...")
-            .addRequestHeader("User-Agent", "Mozilla/5.0 (Linux; Android 12; Kompakt) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36")
+            .addRequestHeader("User-Agent", ListenerApp.USER_AGENT)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(allowMobile)
             .setAllowedOverRoaming(allowMobile)
