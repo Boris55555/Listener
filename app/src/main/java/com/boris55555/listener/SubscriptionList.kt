@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -86,15 +87,28 @@ fun SubscriptionList(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Filtering row
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Show only: ", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.Black)
-                Spacer(modifier = Modifier.width(4.dp))
-                FilterSmallButton("ALL", filterType == null) { filterType = null }
-                Spacer(modifier = Modifier.width(4.dp))
-                FilterSmallButton("PODCASTS", filterType == "RSS") { filterType = "RSS" }
-                Spacer(modifier = Modifier.width(4.dp))
-                FilterSmallButton("YOUTUBE", filterType == "YOUTUBE") { filterType = "YOUTUBE" }
+            val hasPodcasts = subscriptions.any { it.type == "RSS" }
+            val hasYoutube = subscriptions.any { it.type == "YOUTUBE" }
+            val hasLbry = subscriptions.any { it.type == "LBRY" }
+            val typeCount = (if (hasPodcasts) 1 else 0) + (if (hasYoutube) 1 else 0) + (if (hasLbry) 1 else 0)
+
+            // Filtering row (only show if more than one type of subscription exists)
+            if (typeCount > 1) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilterSmallButton("ALL", filterType == null) { filterType = null }
+                    if (hasPodcasts) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterSmallButton("PODCASTS", filterType == "RSS") { filterType = "RSS" }
+                    }
+                    if (hasYoutube) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterSmallButton("YOUTUBE", filterType == "YOUTUBE") { filterType = "YOUTUBE" }
+                    }
+                    if (hasLbry) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterSmallButton("LBRY", filterType == "LBRY") { filterType = "LBRY" }
+                    }
+                }
             }
             
             if (isLoading) {
@@ -145,7 +159,11 @@ fun SubscriptionList(
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val icon = if (sub.type == "RSS") Icons.Default.Podcasts else Icons.Default.PlayCircle
+                        val icon = when (sub.type) {
+                            "RSS" -> Icons.Default.Podcasts
+                            "LBRY" -> Icons.Default.RocketLaunch
+                            else -> Icons.Default.PlayCircle
+                        }
                         Icon(
                             imageVector = icon,
                             contentDescription = null,

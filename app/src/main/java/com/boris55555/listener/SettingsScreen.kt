@@ -200,25 +200,75 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        // Sources Section
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .border(1.dp, Color.Black)
                 .padding(12.dp)
         ) {
-            val showYtLive by viewModel.showYoutubeLive.collectAsState()
+            Text("Sources", fontWeight = FontWeight.Bold, color = Color.Black)
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val isYtEnabled by viewModel.isYoutubeEnabled.collectAsState()
+            val isLbryEnabled by viewModel.isLbryEnabled.collectAsState()
+            
+            // YouTube Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Show YouTube Live", fontWeight = FontWeight.Bold, color = Color.Black)
-                    Text("Include live streams in channel feeds", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
-                }
+                Text("Enable YouTube", fontWeight = FontWeight.Bold, color = Color.Black)
                 Switch(
-                    checked = showYtLive,
-                    onCheckedChange = { viewModel.setShowYoutubeLive(context, it) },
+                    checked = isYtEnabled,
+                    onCheckedChange = { viewModel.setYoutubeEnabled(context, it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.Black,
+                        uncheckedThumbColor = Color.Black,
+                        uncheckedTrackColor = Color.White,
+                        uncheckedBorderColor = Color.Black
+                    )
+                )
+            }
+            
+            if (isYtEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val showYtLive by viewModel.showYoutubeLive.collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Show YouTube Live", fontWeight = FontWeight.Bold, color = Color.Black)
+                    Switch(
+                        checked = showYtLive,
+                        onCheckedChange = { viewModel.setShowYoutubeLive(context, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color.Black,
+                            uncheckedThumbColor = Color.Black,
+                            uncheckedTrackColor = Color.White,
+                            uncheckedBorderColor = Color.Black
+                        )
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // LBRY Toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Enable LBRY", fontWeight = FontWeight.Bold, color = Color.Black)
+                Switch(
+                    checked = isLbryEnabled,
+                    onCheckedChange = { viewModel.setLbryEnabled(context, it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = Color.Black,

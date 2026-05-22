@@ -56,7 +56,8 @@ fun playFile(context: Context, result: SearchResult, viewModel: MainViewModel, e
 fun DownloadedScreen(
     onBack: () -> Unit,
     viewModel: MainViewModel,
-    exoPlayer: Player?
+    exoPlayer: Player?,
+    onChannelClick: (Subscription) -> Unit
 ) {
     val results by viewModel.downloadedFiles.collectAsState()
     val lastPlayed by viewModel.lastPlayedFile.collectAsState()
@@ -68,7 +69,15 @@ fun DownloadedScreen(
     BackHandler(onBack = onBack)
     
     if (infoResult != null) {
-        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null }, viewModel = viewModel)
+        InfoDialog(
+            result = infoResult!!, 
+            onDismiss = { infoResult = null }, 
+            viewModel = viewModel,
+            onChannelClick = { name, url, source ->
+                onChannelClick(Subscription(name, url, source))
+                infoResult = null
+            }
+        )
     }
 
     LaunchedEffect(Unit) {

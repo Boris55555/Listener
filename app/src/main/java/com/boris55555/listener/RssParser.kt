@@ -77,7 +77,7 @@ object RssParser {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
                 val body = response.body?.string() ?: ""
-                parseRssItems(body, isFileDownloaded)
+                parseRssItems(body, url, isFileDownloaded)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -85,7 +85,7 @@ object RssParser {
         }
     }
 
-    fun parseRssItems(body: String, isFileDownloaded: (String) -> Boolean): List<SearchResult> {
+    fun parseRssItems(body: String, feedUrl: String, isFileDownloaded: (String) -> Boolean): List<SearchResult> {
         return try {
             val factory = XmlPullParserFactory.newInstance()
             factory.isNamespaceAware = false
@@ -143,6 +143,7 @@ object RssParser {
                                     url = currentUrl,
                                     isVideo = true,
                                     uploaderName = cleanText(channelTitle),
+                                    uploaderUrl = feedUrl,
                                     description = cleanText(currentDescription),
                                     duration = currentDuration,
                                     isDownloaded = isFileDownloaded(currentTitle),

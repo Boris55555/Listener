@@ -14,7 +14,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
@@ -22,10 +24,15 @@ import androidx.compose.ui.window.Dialog
 fun InfoDialog(
     result: SearchResult,
     onDismiss: () -> Unit,
-    viewModel: MainViewModel? = null
+    viewModel: MainViewModel? = null,
+    onChannelClick: ((String, String, String) -> Unit)? = null // name, url, source
 ) {
     var description by remember { mutableStateOf(result.description) }
     var isLoadingDescription by remember { mutableStateOf(false) }
+    val subscriptions by viewModel?.subscriptions?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
+    
+    // Check if the channel is already followed
+    val isFollowed = result.uploaderUrl?.let { url -> subscriptions.any { it.url == url } } ?: result.isFollowed
 
     LaunchedEffect(result) {
         if (viewModel != null && !result.isRss && result.isVideo) {
@@ -68,22 +75,47 @@ fun InfoDialog(
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 InfoRow("Name", result.name)
-                InfoRow("Channel", result.uploaderName ?: "Unknown")
+                
+                InfoRow(
+                    label = "Channel", 
+                    value = result.uploaderName ?: "Unknown",
+                    isLink = result.uploaderUrl != null,
+                    onClick = {
+                        if (result.uploaderUrl != null) {
+                            onChannelClick?.invoke(result.uploaderName ?: "Unknown", result.uploaderUrl, result.source)
+                        }
+                    }
+                )
+                
+                val sdf = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.US)
+                
                 if (result.pubDate > 0 || !result.textualDate.isNullOrEmpty()) {
                     val dateText = if (result.pubDate > 0) {
-                        val sdf = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.US)
                         sdf.format(java.util.Date(result.pubDate))
                     } else {
                         result.textualDate ?: "Unknown date"
                     }
                     InfoRow("Published", dateText)
                 }
+
+                if (result.isDownloaded && result.downloadDate > 0) {
+                    InfoRow("Downloaded", sdf.format(java.util.Date(result.downloadDate)))
+                }
+                
                 if (result.duration > 0) {
                     val minutes = result.duration / 60
                     val seconds = result.duration % 60
                     InfoRow("Duration", String.format(java.util.Locale.US, "%d:%02d", minutes, seconds))
                 }
-                InfoRow("Source", if (result.isRss) "Podcast (RSS)" else "YouTube")
+                
+                val sourceText = when (result.source) {
+                    "YOUTUBE" -> "YouTube"
+                    "RSS" -> "Podcast (RSS)"
+                    "LBRY" -> "LBRY"
+                    else -> result.source
+                }
+                InfoRow("Source", sourceText)
+
                 if (result.isDownloaded && result.totalSize != null) {
                     InfoRow("Size", result.totalSize)
                 }
@@ -122,9 +154,20 @@ fun InfoDialog(
 }
 
 @Composable
-fun InfoRow(label: String, value: String) {
-    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+fun InfoRow(label: String, value: String, isLink: Boolean = false, onClick: (() -> Unit)? = null) {
+    Column(
+        modifier = Modifier
+            .padding(vertical = 6.dp)
+            .then(if (isLink && onClick != null) Modifier.clickable { onClick() } else Modifier)
+    ) {
         Text(text = label, style = MaterialTheme.typography.titleMedium, color = Color.Black, fontWeight = FontWeight.Bold)
-        Text(text = value, style = MaterialTheme.typography.bodyLarge, color = Color.Black, fontWeight = FontWeight.Bold)
+        Text(
+            text = value, 
+            style = MaterialTheme.typography.bodyLarge.copy(
+                textDecoration = if (isLink) TextDecoration.Underline else TextDecoration.None
+            ), 
+            color = Color.Black, 
+            fontWeight = FontWeight.Bold
+        )
     }
 }

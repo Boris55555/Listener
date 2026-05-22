@@ -1,7 +1,7 @@
 package com.boris55555.listener
 
 enum class ContentFilter { ALL, CHANNELS, TITLES }
-enum class SourceFilter { ALL, YOUTUBE, PODCASTS }
+enum class SourceFilter { ALL, YOUTUBE, PODCASTS, LBRY }
 
 enum class RefreshSetting(val label: String, val hours: Int) {
     H1("1 hour", 1),
@@ -20,6 +20,7 @@ data class SearchResult(
     val url: String, 
     val isVideo: Boolean,
     val uploaderName: String? = null,
+    val uploaderUrl: String? = null,
     val duration: Long = -1,
     val description: String? = null,
     val isDownloaded: Boolean = false,
@@ -32,7 +33,11 @@ data class SearchResult(
     val isLive: Boolean = false,
     val source: String = "YOUTUBE",
     val pubDate: Long = 0,
-    val textualDate: String? = null
+    val textualDate: String? = null,
+    val downloadDate: Long = 0,
+    val mediaType: String? = null,
+    val lbryId: String? = null,
+    val lbryName: String? = null
 )
 
 data class Subscription(

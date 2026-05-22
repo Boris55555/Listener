@@ -10,6 +10,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.common.util.UnstableApi
+import com.google.common.util.concurrent.ListenableFuture
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
@@ -21,6 +22,10 @@ class PlaybackService : MediaSessionService() {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(ListenerApp.USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mapOf(
+                "Referer" to "https://odysee.com/",
+                "Origin" to "https://odysee.com"
+            ))
             
         val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
 
@@ -39,6 +44,17 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(pendingIntent)
+            .setCallback(object : MediaSession.Callback {
+                override fun onPlaybackResumption(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    // This is called when a media button is pressed while the player is stopped/backgrounded
+                    // Return an empty future to indicate we don't support simple resumption yet
+                    // or ideally load the last played item.
+                    return super.onPlaybackResumption(mediaSession, controller)
+                }
+            })
             .build()
     }
 

@@ -128,7 +128,11 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
                 Screen.DOWNLOADED -> DownloadedScreen(
                     onBack = { currentScreen = Screen.SUBSCRIPTIONS },
                     viewModel = viewModel,
-                    exoPlayer = exoPlayer
+                    exoPlayer = exoPlayer,
+                    onChannelClick = { sub ->
+                        viewModel.loadChannelVideos(context, sub)
+                        currentScreen = Screen.SEARCH
+                    }
                 )
                 Screen.SETTINGS -> SettingsScreen(
                     onBack = { currentScreen = Screen.SUBSCRIPTIONS },

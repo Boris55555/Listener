@@ -60,11 +60,9 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                             val request = Request.Builder().url(sub.url).header("User-Agent", ListenerApp.USER_AGENT).build()
                             val response = httpClient.newCall(request).execute()
                             val body = response.body?.string() ?: ""
-                            val doc = Jsoup.parse(body, "", Parser.xmlParser())
-                            val item = doc.select("item").first()
-                            val url = item?.select("enclosure")?.attr("url") ?: item?.select("link")?.text()
-                            val title = item?.select("title")?.text()
-                            Pair(url, title)
+                            val results = RssParser.parseRssItems(body, sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(applicationContext, name) }
+                            val item = results.firstOrNull()
+                            Pair(item?.url, item?.name)
                         } catch (e: Exception) { Pair(null, null) }
                     } else {
                         val service = ServiceList.YouTube

@@ -54,19 +54,55 @@ object DownloadManagerHelper {
         return id
     }
 
+    private fun getMetadataForFile(fileName: String, metadata: Map<String, SearchResult>): SearchResult? {
+        val trimmed = fileName.trim()
+        metadata[trimmed]?.let { return it }
+        // Try with underscores replaced by spaces
+        metadata[trimmed.replace("_", " ")]?.let { return it }
+        
+        // Try stripping " -1", " -2", etc.
+        val regex = Regex("(.*) -\\d+$")
+        val match = regex.matchEntire(trimmed)
+        if (match != null) {
+            val baseName = match.groupValues[1].trim()
+            metadata[baseName]?.let { return it }
+            metadata[baseName.replace("_", " ")]?.let { return it }
+        }
+        return null
+    }
+
     fun isFileFullyDownloaded(context: Context, name: String): Boolean {
         val sanitizedName = sanitizeFilename(name)
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         
         if (isCurrentlyDownloading(dm, sanitizedName)) return false
 
+        val extensions = listOf("m4a", "mp3", "mp4")
+
         val customUri = getDownloadPath(context)
         if (customUri != null) {
             val doc = DocumentFile.fromTreeUri(context, customUri)
-            if (doc?.findFile("$sanitizedName.m4a") != null) return true
+            if (doc != null) {
+                val files = doc.listFiles()
+                if (files.any { f -> 
+                    val fname = f.name ?: ""
+                    extensions.any { ext ->
+                        val base = fname.removeSuffix(".$ext")
+                        if (base == fname) false // extension didn't match
+                        else base == sanitizedName || (base.startsWith("$sanitizedName -") && base.substringAfterLast(" -").all { it.isDigit() })
+                    }
+                }) return true
+            }
         }
         val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener")
-        if (File(publicDir, "$sanitizedName.m4a").exists()) return true
+        if (publicDir.exists()) {
+            val files = publicDir.listFiles()
+            if (files != null && files.any { f -> 
+                val fname = f.nameWithoutExtension
+                val ext = f.extension
+                extensions.contains(ext) && (fname == sanitizedName || (fname.startsWith("$sanitizedName -") && fname.substringAfterLast(" -").all { it.isDigit() }))
+            }) return true
+        }
         return false
     }
 
@@ -74,29 +110,38 @@ object DownloadManagerHelper {
         val results = mutableListOf<SearchResult>()
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
+        val extensions = listOf(".m4a", ".mp3", ".mp4", "")
+
         // 1. Finished files from custom folder
         val customUri = getDownloadPath(context)
         if (customUri != null) {
             val doc = DocumentFile.fromTreeUri(context, customUri)
             doc?.listFiles()?.forEach { file ->
-                if (file.name?.endsWith(".m4a") == true) {
-                    val fileName = file.name?.removeSuffix(".m4a") ?: "Unknown"
-                    if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
-                        val meta = metadata[fileName]
-                        results.add(SearchResult(
-                            name = fileName,
-                            url = file.uri.toString(),
-                            isVideo = true,
-                            isDownloaded = true,
-                            uploaderName = meta?.uploaderName ?: "Unknown",
-                            isRss = meta?.isRss ?: false,
-                            description = meta?.description ?: "",
-                            duration = meta?.duration ?: -1L,
-                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
-                            totalSize = StorageManager.formatFileSize(file.length()),
-                            pubDate = file.lastModified()
-                        ))
-                    }
+                val name = file.name ?: ""
+                val matchedExt = extensions.find { it.isNotEmpty() && name.endsWith(it) }
+                val fileName = if (matchedExt != null) name.removeSuffix(matchedExt) else name
+                
+                if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
+                    val meta = getMetadataForFile(fileName, metadata)
+                    results.add(SearchResult(
+                        name = fileName,
+                        url = file.uri.toString(),
+                        isVideo = true,
+                        isDownloaded = true,
+                        uploaderName = meta?.uploaderName ?: "Unknown",
+                        uploaderUrl = meta?.uploaderUrl,
+                        isRss = meta?.isRss ?: false,
+                        description = meta?.description ?: "",
+                        duration = meta?.duration ?: -1L,
+                        source = meta?.source ?: "YOUTUBE",
+                        totalSize = StorageManager.formatFileSize(file.length()),
+                        pubDate = meta?.pubDate ?: 0L,
+                        textualDate = meta?.textualDate,
+                        downloadDate = file.lastModified(),
+                        lbryId = meta?.lbryId,
+                        lbryName = meta?.lbryName,
+                        mediaType = meta?.mediaType
+                    ))
                 }
             }
         }
@@ -104,23 +149,32 @@ object DownloadManagerHelper {
         // 2. Finished files from public folder
         val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener")
         if (publicDir.exists()) {
-            publicDir.listFiles { f -> f.name.endsWith(".m4a") }?.forEach { file ->
-                if (results.none { it.name == file.nameWithoutExtension }) {
-                    val fileName = file.nameWithoutExtension
+            publicDir.listFiles()?.forEach { file ->
+                val name = file.name
+                val matchedExt = extensions.find { it.isNotEmpty() && name.endsWith(it) }
+                val fileName = if (matchedExt != null) name.removeSuffix(matchedExt) else name
+                
+                if (results.none { it.name == fileName }) {
                     if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
-                        val meta = metadata[fileName]
+                        val meta = getMetadataForFile(fileName, metadata)
                         results.add(SearchResult(
                             name = fileName,
                             url = Uri.fromFile(file).toString(),
                             isVideo = true,
                             isDownloaded = true,
                             uploaderName = meta?.uploaderName ?: "Unknown",
+                            uploaderUrl = meta?.uploaderUrl,
                             isRss = meta?.isRss ?: false,
                             description = meta?.description ?: "",
                             duration = meta?.duration ?: -1L,
-                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
+                            source = meta?.source ?: "YOUTUBE",
                             totalSize = StorageManager.formatFileSize(file.length()),
-                            pubDate = file.lastModified()
+                            pubDate = meta?.pubDate ?: 0L,
+                            textualDate = meta?.textualDate,
+                            downloadDate = file.lastModified(),
+                            lbryId = meta?.lbryId,
+                            lbryName = meta?.lbryName,
+                            mediaType = meta?.mediaType
                         ))
                     }
                 }
@@ -147,7 +201,7 @@ object DownloadManagerHelper {
                         val total = if (totalColumn != -1) cursor.getLong(totalColumn) else 0L
                         val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
                         val sanitizedName = sanitizeFilename(title)
-                        val meta = metadata[sanitizedName]
+                        val meta = getMetadataForFile(sanitizedName, metadata)
 
                         results.add(SearchResult(
                             name = title,
@@ -158,12 +212,17 @@ object DownloadManagerHelper {
                             downloadId = id,
                             downloadProgress = progress,
                             uploaderName = meta?.uploaderName ?: "Unknown",
+                            uploaderUrl = meta?.uploaderUrl,
                             isRss = meta?.isRss ?: false,
                             description = meta?.description ?: "",
                             duration = meta?.duration ?: -1L,
-                            source = if (meta?.isRss == true) "RSS" else "YOUTUBE",
+                            source = meta?.source ?: "YOUTUBE",
                             totalSize = if (total > 0) StorageManager.formatFileSize(total) else null,
-                            pubDate = System.currentTimeMillis() // Show at top
+                            pubDate = meta?.pubDate ?: System.currentTimeMillis(), // Show at top if new
+                            textualDate = meta?.textualDate,
+                            lbryId = meta?.lbryId,
+                            lbryName = meta?.lbryName,
+                            mediaType = meta?.mediaType
                         ))
                     }
                 }
@@ -177,14 +236,41 @@ object DownloadManagerHelper {
     fun enqueueDownload(context: Context, result: SearchResult, audioUrl: String, allowMobile: Boolean): Long {
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val sanitizedName = sanitizeFilename(result.name)
+        
+        val isLbry = result.source == "LBRY" || result.lbryId != null
+        val mediaType = result.mediaType?.lowercase() ?: ""
+        
+        val (ext, mime) = when {
+            audioUrl.lowercase().contains(".mp3") -> "mp3" to "audio/mpeg"
+            audioUrl.lowercase().contains(".mp4") -> "mp4" to "video/mp4"
+            audioUrl.lowercase().contains(".m4a") -> "m4a" to "audio/mp4"
+            audioUrl.lowercase().contains(".m3u8") -> "mp4" to "video/mp4" // Treat HLS as mp4 for filename, though it might fail
+            isLbry && (mediaType.contains("mp3") || mediaType.contains("audio")) -> "mp3" to "audio/mpeg"
+            isLbry && mediaType.contains("video") -> "mp4" to "video/mp4"
+            isLbry && result.isVideo -> "mp4" to "video/mp4"
+            isLbry -> "mp3" to "audio/mpeg"
+            else -> "m4a" to "audio/mp4"
+        }
+
         val request = DownloadManager.Request(Uri.parse(audioUrl))
             .setTitle(result.name)
-            .setDescription("Downloading audio...")
+            .setDescription("Downloading ${if (isLbry) "LBRY" else "YouTube"} audio...")
+            .setMimeType(mime)
             .addRequestHeader("User-Agent", ListenerApp.USER_AGENT)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(allowMobile)
             .setAllowedOverRoaming(allowMobile)
-        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Listener/$sanitizedName.m4a")
+        
+        if (isLbry) {
+            request.addRequestHeader("Referer", "https://odysee.com/")
+            request.addRequestHeader("Origin", "https://odysee.com")
+            request.addRequestHeader("Accept", "*/*")
+        }
+        
+        val fullFileName = "$sanitizedName.$ext"
+        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Listener/$fullFileName")
+        
+        android.util.Log.d("DownloadHelper", "Enqueuing download: $fullFileName (MIME: $mime) from URL: $audioUrl")
         return dm.enqueue(request)
     }
 
@@ -192,21 +278,49 @@ object DownloadManagerHelper {
         val sanitizedName = sanitizeFilename(name)
         val customUri = getDownloadPath(context)
         if (customUri != null) {
-            DocumentFile.fromTreeUri(context, customUri)?.findFile("$sanitizedName.m4a")?.delete()
+            val doc = DocumentFile.fromTreeUri(context, customUri)
+            doc?.findFile("$sanitizedName.m4a")?.delete()
+            doc?.findFile("$sanitizedName.mp3")?.delete()
+            doc?.findFile("$sanitizedName.mp4")?.delete()
         }
-        val publicFile = File(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener"), "$sanitizedName.m4a")
-        if (publicFile.exists()) publicFile.delete()
+        val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener")
+        File(publicDir, "$sanitizedName.m4a").takeIf { it.exists() }?.delete()
+        File(publicDir, "$sanitizedName.mp3").takeIf { it.exists() }?.delete()
+        File(publicDir, "$sanitizedName.mp4").takeIf { it.exists() }?.delete()
     }
 
     fun getLocalUri(context: Context, name: String): Uri? {
         val sanitizedName = sanitizeFilename(name)
         val customUri = getDownloadPath(context)
+        val extensions = listOf(".m4a", ".mp3", ".mp4", "")
+        
         if (customUri != null) {
-            val file = DocumentFile.fromTreeUri(context, customUri)?.findFile("$sanitizedName.m4a")
-            if (file != null) return file.uri
+            val doc = DocumentFile.fromTreeUri(context, customUri)
+            if (doc != null) {
+                val files = doc.listFiles()
+                val file = files.find { f -> 
+                    val fname = f.name ?: ""
+                    extensions.any { ext -> 
+                        val base = if (ext.isNotEmpty()) fname.removeSuffix(ext) else fname
+                        base == sanitizedName || (base.startsWith("$sanitizedName -") && base.substringAfterLast(" -").all { it.isDigit() })
+                    }
+                }
+                if (file != null) return file.uri
+            }
         }
-        val publicFile = File(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener"), "$sanitizedName.m4a")
-        if (publicFile.exists()) return Uri.fromFile(publicFile)
+        
+        val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Listener")
+        if (publicDir.exists()) {
+            val files = publicDir.listFiles()
+            val file = files?.find { f ->
+                val fname = f.name
+                extensions.any { ext ->
+                    val base = if (ext.isNotEmpty()) fname.removeSuffix(ext) else fname
+                    base == sanitizedName || (base.startsWith("$sanitizedName -") && base.substringAfterLast(" -").all { it.isDigit() })
+                }
+            }
+            if (file != null) return Uri.fromFile(file)
+        }
         return null
     }
 
@@ -230,5 +344,13 @@ object DownloadManagerHelper {
         return uri.path?.split("/")?.lastOrNull()?.replace("primary:", "") ?: "Selected folder"
     }
 
-    fun sanitizeFilename(name: String): String = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    fun sanitizeFilename(name: String): String {
+        val sanitized = name.trim()
+            .replace(Regex("[^a-zA-Z0-9.-]"), "_") // Whitelist only alphanumeric, dots and hyphens
+            .replace(Regex("_+"), "_") // Consolidate underscores
+            .trim('_', '.')
+        
+        val base = if (sanitized.isEmpty()) "download_${System.currentTimeMillis()}" else sanitized
+        return if (base.length > 50) base.take(50).trim('_', '.') else base
+    }
 }

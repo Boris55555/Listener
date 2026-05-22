@@ -19,8 +19,8 @@ android {
         applicationId = "com.boris55555.listener"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -70,6 +70,8 @@ dependencies {
     implementation(libs.androidx.work.runtime)
 
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.hls)
+    implementation(libs.androidx.media3.dash)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.session)
     implementation(libs.okhttp)

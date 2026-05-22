@@ -55,7 +55,15 @@ fun SearchScreen(
     BackHandler(onBack = onBack)
 
     if (infoResult != null) {
-        InfoDialog(result = infoResult!!, onDismiss = { infoResult = null }, viewModel = viewModel)
+        InfoDialog(
+            result = infoResult!!, 
+            onDismiss = { infoResult = null }, 
+            viewModel = viewModel,
+            onChannelClick = { name, url, source ->
+                viewModel.loadChannelVideos(context, Subscription(name, url, source))
+                infoResult = null
+            }
+        )
     }
 
     // Register receiver to refresh status when download finishes
@@ -117,10 +125,18 @@ fun SearchScreen(
                 FilterButton("TITLES", viewModel.contentFilter == ContentFilter.TITLES) { viewModel.contentFilter = ContentFilter.TITLES }
             }
             Spacer(modifier = Modifier.height(4.dp))
+            val isYtEnabled by viewModel.isYoutubeEnabled.collectAsState()
+            val isLbryEnabled by viewModel.isLbryEnabled.collectAsState()
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterButton("ALL SOURCE", viewModel.sourceFilter == SourceFilter.ALL) { viewModel.sourceFilter = SourceFilter.ALL }
-                FilterButton("YOUTUBE", viewModel.sourceFilter == SourceFilter.YOUTUBE) { viewModel.sourceFilter = SourceFilter.YOUTUBE }
+                if (isYtEnabled) {
+                    FilterButton("YOUTUBE", viewModel.sourceFilter == SourceFilter.YOUTUBE) { viewModel.sourceFilter = SourceFilter.YOUTUBE }
+                }
                 FilterButton("PODCASTS", viewModel.sourceFilter == SourceFilter.PODCASTS) { viewModel.sourceFilter = SourceFilter.PODCASTS }
+                if (isLbryEnabled) {
+                    FilterButton("LBRY", viewModel.sourceFilter == SourceFilter.LBRY) { viewModel.sourceFilter = SourceFilter.LBRY }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -134,30 +150,49 @@ fun SearchScreen(
             }
         } else {
             // Subscription View Mode
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                contentAlignment = Alignment.Center
             ) {
                 IconButton(
                     onClick = onBack,
-                    modifier = Modifier.border(1.dp, Color.Black),
+                    modifier = Modifier.align(Alignment.CenterStart).border(1.dp, Color.Black),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Takaisin")
                 }
+                
                 Text(
                     text = currentSubscription?.name ?: "",
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.headlineMedium.copy( // Larger as requested
+                    modifier = Modifier.padding(horizontal = 48.dp),
+                    style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         textDecoration = TextDecoration.Underline
                     ),
                     textAlign = TextAlign.Center,
                     color = Color.Black
                 )
-                // Spacer for symmetry
-                Spacer(modifier = Modifier.width(48.dp))
+                
+                val subscriptions by viewModel.subscriptions.collectAsState()
+                val isFollowed = currentSubscription?.let { sub -> subscriptions.any { it.url == sub.url } } ?: false
+                
+                if (!isFollowed) {
+                    Button(
+                        onClick = {
+                            currentSubscription?.let { sub ->
+                                viewModel.follow(context, sub.name, sub.url, sub.type)
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.CenterEnd).border(1.dp, Color.Black),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Black,
+                            contentColor = Color.White
+                        ),
+                        shape = RectangleShape,
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Text("SUB", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
 
@@ -208,6 +243,9 @@ fun SearchScreen(
                                 val mediaItem = MediaItem.Builder()
                                     .setUri(localUri)
                                     .setMediaId(mediaId)
+                                    .apply {
+                                        result.mediaType?.let { setMimeType(it) }
+                                    }
                                     .setMediaMetadata(
                                         MediaMetadata.Builder()
                                             .setTitle(result.name)
@@ -229,6 +267,14 @@ fun SearchScreen(
                                     val mediaItem = MediaItem.Builder()
                                     .setUri(audioUrl)
                                     .setMediaId(mediaId)
+                                    .apply {
+                                        val mime = when {
+                                            audioUrl.contains(".m3u8") || audioUrl.contains("/master.m3u8") -> "application/x-mpegURL"
+                                            audioUrl.contains(".mpd") -> "application/dash+xml"
+                                            else -> result.mediaType
+                                        }
+                                        mime?.let { setMimeType(it) }
+                                    }
                                     .setMediaMetadata(
                                         MediaMetadata.Builder()
                                             .setTitle(result.name)
@@ -262,7 +308,12 @@ fun SearchScreen(
                         if (result.isFollowed) {
                             viewModel.unfollow(context, result.url)
                         } else {
-                            viewModel.follow(context, result.name, result.url, if (result.isRss) "RSS" else "YOUTUBE")
+                            val type = when (result.source) {
+                                "RSS" -> "RSS"
+                                "LBRY" -> "LBRY"
+                                else -> "YOUTUBE"
+                            }
+                            viewModel.follow(context, result.name, result.url, type)
                         }
                     },
                     onClick = {

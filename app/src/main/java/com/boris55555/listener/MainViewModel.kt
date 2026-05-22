@@ -61,6 +61,12 @@ class MainViewModel : ViewModel() {
     private val _showNotifications = MutableStateFlow(false)
     val showNotifications: StateFlow<Boolean> = _showNotifications
 
+    private val _isYoutubeEnabled = MutableStateFlow(false)
+    val isYoutubeEnabled: StateFlow<Boolean> = _isYoutubeEnabled
+
+    private val _isLbryEnabled = MutableStateFlow(false)
+    val isLbryEnabled: StateFlow<Boolean> = _isLbryEnabled
+
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed
 
@@ -107,6 +113,12 @@ class MainViewModel : ViewModel() {
 
             val notifications = prefs.getBoolean("show_notifications", false)
             _showNotifications.value = notifications
+
+            val ytEnabled = prefs.getBoolean("youtube_enabled", false)
+            _isYoutubeEnabled.value = ytEnabled
+
+            val lbryEnabled = prefs.getBoolean("lbry_enabled", false)
+            _isLbryEnabled.value = lbryEnabled
             
             refreshDownloadedFiles(context)
             
@@ -151,6 +163,30 @@ class MainViewModel : ViewModel() {
             .edit()
             .putBoolean("show_notifications", show)
             .apply()
+    }
+
+    fun setYoutubeEnabled(context: Context, enabled: Boolean) {
+        _isYoutubeEnabled.value = enabled
+        context.getSharedPreferences("listener_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("youtube_enabled", enabled)
+            .apply()
+        
+        if (!enabled && sourceFilter == SourceFilter.YOUTUBE) {
+            sourceFilter = SourceFilter.ALL
+        }
+    }
+
+    fun setLbryEnabled(context: Context, enabled: Boolean) {
+        _isLbryEnabled.value = enabled
+        context.getSharedPreferences("listener_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("lbry_enabled", enabled)
+            .apply()
+        
+        if (!enabled && sourceFilter == SourceFilter.LBRY) {
+            sourceFilter = SourceFilter.ALL
+        }
     }
 
     fun isNetworkOperationAllowed(context: Context): Boolean {
@@ -327,7 +363,7 @@ class MainViewModel : ViewModel() {
             _currentSubscription.value = null
             
             try {
-                val youtubeResults = if (sourceFilter == SourceFilter.ALL || sourceFilter == SourceFilter.YOUTUBE) {
+                val youtubeResults = if (_isYoutubeEnabled.value && (sourceFilter == SourceFilter.ALL || sourceFilter == SourceFilter.YOUTUBE)) {
                     val container = YouTubeManager.searchYouTube(trimmedQuery, contentFilter)
                     currentNextPage = container.nextPage
                     _hasMore.value = container.nextPage != null
@@ -338,7 +374,11 @@ class MainViewModel : ViewModel() {
                     RssParser.searchPodcasts(trimmedQuery)
                 } else emptyList()
 
-                val results = (youtubeResults + podcastResults).map { res ->
+                val lbryResults = if (_isLbryEnabled.value && (sourceFilter == SourceFilter.ALL || sourceFilter == SourceFilter.LBRY)) {
+                    LbryManager.searchLbry(trimmedQuery, contentFilter)
+                } else emptyList()
+
+                val results = (youtubeResults + podcastResults + lbryResults).map { res ->
                     syncResultStatus(context, res)
                 }
                 _searchResults.value = results
@@ -406,9 +446,26 @@ class MainViewModel : ViewModel() {
 
             if (subscription.type == "RSS") {
                 loadRssEpisodes(context, subscription.url)
+            } else if (subscription.type == "LBRY") {
+                loadLbryChannelInitial(context, subscription)
             } else {
                 loadYoutubeChannelInitial(context, subscription)
             }
+        }
+    }
+
+    private fun loadLbryChannelInitial(context: Context, subscription: Subscription) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val container = LbryManager.fetchChannelInitial(subscription.url, subscription.name)
+                val results = container.results
+                val display = results.take(5).map { syncResultStatus(context, it) }
+                _searchResults.value = display
+                channelCache[subscription.url] = results 
+                _hasMore.value = results.size > 5
+                StorageManager.saveChannelCache(context, channelCache)
+            } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
     }
 
@@ -439,10 +496,10 @@ class MainViewModel : ViewModel() {
             withContext(Dispatchers.IO) {
                 currentSubs.forEach { sub ->
                     try {
-                        val results = if (sub.type == "RSS") {
-                            RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }.take(10)
-                        } else {
-                            YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name).results.take(10)
+                        val results = when (sub.type) {
+                            "RSS" -> RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }.take(10)
+                            "LBRY" -> LbryManager.fetchChannelInitial(sub.url, sub.name).results.take(10)
+                            else -> YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name).results.take(10)
                         }
                         if (results.isNotEmpty()) {
                             channelCache[sub.url] = results
@@ -483,7 +540,7 @@ class MainViewModel : ViewModel() {
             try {
                 val cachedFull = channelCache[sub.url] ?: emptyList()
                 
-                if (sub.type == "RSS") {
+                if (sub.type == "RSS" || sub.type == "LBRY") {
                     val nextFive = cachedFull.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
                     if (nextFive.isNotEmpty()) {
                         val newList = currentResults + nextFive
@@ -640,6 +697,7 @@ class MainViewModel : ViewModel() {
     suspend fun getAudioUrl(context: Context, result: SearchResult): String? {
         if (!isNetworkOperationAllowed(context)) return null
         if (result.isRss) return result.url
+        if (result.source == "LBRY") return LbryManager.getStreamUrl(result.url, result.lbryId, result.lbryName)
         return withContext(Dispatchers.IO) {
             try {
                 val streamInfo = YouTubeManager.getStreamInfo(result.url)

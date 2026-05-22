@@ -111,12 +111,17 @@ object StorageManager {
             
             val item = JSONObject()
             item.put("uploader", result.uploaderName ?: "Unknown")
+            item.put("uploaderUrl", result.uploaderUrl ?: "")
             item.put("isRss", result.isRss)
             item.put("desc", result.description ?: "")
             item.put("duration", result.duration)
             item.put("url", result.url)
             item.put("pubDate", result.pubDate)
             item.put("textualDate", result.textualDate ?: "")
+            item.put("source", result.source)
+            item.put("mediaType", result.mediaType ?: "")
+            item.put("lbryId", result.lbryId ?: "")
+            item.put("lbryName", result.lbryName ?: "")
             json.put(fileName, item)
             
             file.writeText(json.toString())
@@ -138,11 +143,16 @@ object StorageManager {
                     url = item.optString("url", ""),
                     isVideo = true,
                     uploaderName = item.optString("uploader", "Unknown"),
+                    uploaderUrl = item.optString("uploaderUrl").takeIf { it.isNotEmpty() },
                     isRss = item.optBoolean("isRss", false),
                     description = item.optString("desc", ""),
                     duration = item.optLong("duration", -1L),
                     pubDate = item.optLong("pubDate", 0L),
-                    textualDate = item.optString("textualDate").takeIf { it.isNotEmpty() }
+                    textualDate = item.optString("textualDate").takeIf { it.isNotEmpty() },
+                    source = item.optString("source", "YOUTUBE"),
+                    mediaType = item.optString("mediaType").takeIf { it.isNotEmpty() },
+                    lbryId = item.optString("lbryId").takeIf { it.isNotEmpty() },
+                    lbryName = item.optString("lbryName").takeIf { it.isNotEmpty() }
                 )
             }
             map
@@ -175,6 +185,7 @@ object StorageManager {
                     item.put("url", res.url)
                     item.put("isVideo", res.isVideo)
                     item.put("uploader", res.uploaderName)
+                    item.put("uploaderUrl", res.uploaderUrl)
                     item.put("duration", res.duration)
                     item.put("desc", res.description)
                     item.put("isRss", res.isRss)
@@ -208,6 +219,7 @@ object StorageManager {
                         url = item.getString("url"),
                         isVideo = item.getBoolean("isVideo"),
                         uploaderName = item.optString("uploader", "Unknown"),
+                        uploaderUrl = item.optString("uploaderUrl").takeIf { it.isNotEmpty() },
                         duration = item.optLong("duration", -1L),
                         description = item.optString("desc", ""),
                         isRss = item.optBoolean("isRss", false),

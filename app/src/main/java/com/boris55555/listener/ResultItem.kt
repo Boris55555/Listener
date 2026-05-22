@@ -45,6 +45,7 @@ fun ResultItem(
                         val sourceText = when (result.source) {
                             "YOUTUBE" -> " (YouTube)"
                             "RSS" -> " (Podcast)"
+                            "LBRY" -> " (LBRY)"
                             else -> ""
                         }
                         append(sourceText)
@@ -89,10 +90,15 @@ fun ResultItem(
                         fontWeight = FontWeight.Bold
                     )
                 } else {
-                    val label = if (result.isLive) "Streamed on: " else "Published: "
+                    val label = when {
+                        result.isDownloaded -> "Downloaded: "
+                        result.isLive -> "Streamed on: "
+                        else -> "Published: "
+                    }
+                    val dateToFormat = if (result.isDownloaded && result.downloadDate > 0) result.downloadDate else result.pubDate
                     val dateText = when {
-                        result.pubDate > 0 -> try {
-                            dateFormatter.format(Date(result.pubDate))
+                        dateToFormat > 0 -> try {
+                            dateFormatter.format(Date(dateToFormat))
                         } catch (e: Exception) { result.textualDate }
                         !result.textualDate.isNullOrEmpty() -> result.textualDate
                         else -> null
