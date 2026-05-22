@@ -5,9 +5,9 @@
 ## 🚀 Key Features
 
 - **E-ink Optimized UI**: High-contrast B&W interface with no animations to prevent ghosting.
-- **YouTube Audio**: Search and listen to YouTube videos as audio tracks.
+- **YouTube & LBRY Audio**: Search and listen to YouTube videos and LBRY/Odysee content as audio tracks.
 - **Podcast Support**: Support for RSS-based podcast feeds.
-- **Subscriptions**: Subscribe to your favorite YouTube channels and Podcasts.
+- **Subscriptions**: Subscribe to your favorite YouTube channels, LBRY creators, and Podcasts.
 - **Offline Downloads**: Download tracks for offline listening using Android's native Download Manager.
 - **Smart Playback**: Remembers your playback position for each track individually.
 - **Adjustable Speed**: Change playback speed from 0.5x up to 2.0x.
