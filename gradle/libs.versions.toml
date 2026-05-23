@@ -16,6 +16,8 @@ newpipeExtractor = "b33c151ea844068bf663ed766c81356f57bbc173"
 nanojson = "e9d656ddb49a412a5a0a5d5ef20ca7ef09549996"
 androidDesugar = "2.0.4"
 work = "2.11.2"
+ffmpegKitFork = "6.1.1"
+youtubedl = "0.14.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -46,6 +48,9 @@ nanojson = { group = "com.github.TeamNewPipe", name = "nanojson", version.ref = 
 android-desugar = { group = "com.android.tools", name = "desugar_jdk_libs_nio", version.ref = "androidDesugar" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.1.0" }
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+ffmpegKit = { group = "com.moizhassan.ffmpeg", name = "ffmpeg-kit-16kb", version.ref = "ffmpegKitFork" }
+youtubedl-android = { group = "com.github.yausername.youtubedl-android", name = "library", version.ref = "youtubedl" }
+youtubedl-ffmpeg = { group = "com.github.yausername.youtubedl-android", name = "ffmpeg", version.ref = "youtubedl" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

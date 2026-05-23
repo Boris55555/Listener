@@ -1,6 +1,9 @@
 package com.boris55555.listener
 
 import android.app.Application
+import android.util.Log
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.ffmpeg.FFmpeg
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
@@ -24,6 +27,15 @@ class ListenerApp : Application() {
         super.onCreate()
         // Initialize NewPipe with US English to maximize extraction compatibility
         NewPipe.init(SimpleDownloader(), Localization.DEFAULT, ContentCountry.DEFAULT)
+        
+        // Initialize YoutubeDL components
+        try {
+            YoutubeDL.getInstance().init(this)
+            FFmpeg.getInstance().init(this)
+            Log.d("ListenerApp", "YoutubeDL/FFmpeg initialized successfully")
+        } catch (e: Exception) {
+            Log.e("ListenerApp", "YoutubeDL initialization failed", e)
+        }
     }
 }
 

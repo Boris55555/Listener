@@ -56,7 +56,8 @@ object StorageManager {
                 val lastUpdated = if (parts.size > 3) parts[3].toLongOrNull() ?: 0L else 0L
                 val latestItemUrl = if (parts.size > 4) parts[4] else null
                 val latestItemPubDate = if (parts.size > 5) parts[5].toLongOrNull() ?: 0L else 0L
-                Subscription(parts[0], parts[1], type, lastUpdated, latestItemUrl, latestItemPubDate)
+                val youtubeChannelId = if (parts.size > 6) parts[6].takeIf { it.isNotEmpty() } else null
+                Subscription(parts[0], parts[1], type, lastUpdated, latestItemUrl, latestItemPubDate, youtubeChannelId)
             }
         } catch (e: Exception) {
             emptyList()
@@ -68,7 +69,7 @@ object StorageManager {
         // Sort by the actual content date, fallback to update date
         val sorted = subs.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
         val content = sorted.joinToString("\n") { 
-            "${it.name}|${it.url}|${it.type}|${it.lastUpdated}|${it.latestItemUrl ?: ""}|${it.latestItemPubDate}"
+            "${it.name}|${it.url}|${it.type}|${it.lastUpdated}|${it.latestItemUrl ?: ""}|${it.latestItemPubDate}|${it.youtubeChannelId ?: ""}"
         }
         file.writeText(content)
     }
@@ -159,6 +160,10 @@ object StorageManager {
         } catch (e: Exception) {
             emptyMap()
         }
+    }
+
+    fun loadDownloadMetadata(context: Context, fileName: String): SearchResult? {
+        return loadAllDownloadMetadata(context)[fileName]
     }
 
     fun deleteDownloadMetadata(context: Context, fileName: String) {

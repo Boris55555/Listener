@@ -214,6 +214,8 @@ object LbryManager {
             val responseBody = response.body?.string() ?: return@withContext SearchResultContainer(emptyList(), null, null)
             val items = JSONObject(responseBody).getJSONObject("result").getJSONArray("items")
             
+            val channelUrl = if (url.startsWith("lbry://")) url else "lbry://$url"
+            
             val results = mutableListOf<SearchResult>()
             for (i in 0 until items.length()) {
                 val claim = items.getJSONObject(i)
@@ -229,6 +231,7 @@ object LbryManager {
                     url = "https://odysee.com/$/download/$name/$claimId",
                     isVideo = true,
                     uploaderName = subscriptionName,
+                    uploaderUrl = channelUrl,
                     duration = value?.optJSONObject("video")?.optLong("duration") ?: value?.optJSONObject("audio")?.optLong("duration") ?: -1L,
                     description = value?.optString("description"),
                     source = "LBRY",
@@ -279,22 +282,26 @@ object LbryManager {
                 .build()
             
             val response = httpClient.newCall(request).execute()
-            if (response.code == 429) {
-                android.util.Log.e("LbryManager", "429 Too Many Requests from Proxy API - Retrying once...")
-                delay(1000)
-                val retryResponse = httpClient.newCall(request).execute()
-                if (retryResponse.isSuccessful) return@withContext processGetResult(retryResponse)
-            }
             if (response.isSuccessful) {
                 return@withContext processGetResult(response)
+            } else if (response.code == 429) {
+                android.util.Log.w("LbryManager", "429 Too Many Requests from Proxy API - Trying direct CDN fallback")
+                if (lbryId != null) {
+                    val directUrl = "https://player.odycdn.com/v6/streams/$lbryId/master.mp4"
+                    return@withContext directUrl
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
         
-        // Fallback to direct stream format if API fails
+        // Fallback to construction if API fails or blocks
+        if (lbryId != null) {
+            return@withContext "https://player.odycdn.com/v6/streams/$lbryId/master.mp4"
+        }
+        
         val finalId = lbryId ?: url.substringAfterLast("/", "").substringAfterLast("#", "").takeIf { it.length > 20 }
-        if (finalId != null) "https://odysee.com/$/stream/$finalId" else url
+        if (finalId != null) "https://player.odycdn.com/v6/streams/$finalId/master.mp4" else url
     }
 
     private fun processGetResult(response: okhttp3.Response): String {

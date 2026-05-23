@@ -40,6 +40,12 @@ class MainViewModel : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
+    private val _loadingUrl = MutableStateFlow<String?>(null)
+    val loadingUrl: StateFlow<String?> = _loadingUrl
+
+    private val _preparingDownloadUrl = MutableStateFlow<String?>(null)
+    val preparingDownloadUrl: StateFlow<String?> = _preparingDownloadUrl
+
     private val _hasMore = MutableStateFlow(false)
     val hasMore: StateFlow<Boolean> = _hasMore
 
@@ -75,6 +81,11 @@ class MainViewModel : ViewModel() {
 
     private val _playbackDuration = MutableStateFlow(0L)
     val playbackDuration: StateFlow<Long> = _playbackDuration
+
+    private val _sponsorSegments = MutableStateFlow<List<SponsorBlockManager.Segment>>(emptyList())
+    val sponsorSegments: StateFlow<List<SponsorBlockManager.Segment>> = _sponsorSegments
+
+    private var lastSkippedSegment: SponsorBlockManager.Segment? = null
 
     // Filter states
     var contentFilter by mutableStateOf(ContentFilter.ALL)
@@ -122,8 +133,32 @@ class MainViewModel : ViewModel() {
             
             refreshDownloadedFiles(context)
             
+            // Migrate YouTube subscriptions to include channelId for RSS
+            migrateYoutubeSubscriptions(context)
+
             if (setting != RefreshSetting.MANUAL) {
                 updateAllSubscriptions(context)
+            }
+        }
+    }
+
+    private fun migrateYoutubeSubscriptions(context: Context) {
+        viewModelScope.launch {
+            val current = _subscriptions.value
+            val needsMigration = current.filter { it.type == "YOUTUBE" && it.youtubeChannelId == null }
+            if (needsMigration.isNotEmpty()) {
+                val updated = current.toMutableList()
+                needsMigration.forEach { sub ->
+                    val id = YouTubeRssManager.getChannelId(sub.url)
+                    if (id != null) {
+                        val idx = updated.indexOfFirst { it.url == sub.url }
+                        if (idx != -1) {
+                            updated[idx] = updated[idx].copy(youtubeChannelId = id)
+                        }
+                    }
+                }
+                StorageManager.saveSubscriptions(context, updated)
+                _subscriptions.value = updated.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
             }
         }
     }
@@ -224,37 +259,47 @@ class MainViewModel : ViewModel() {
     fun getDownloadPathName(context: Context): String = DownloadManagerHelper.getDownloadPathName(context)
 
     fun refreshDownloadedFiles(context: Context) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val metadata = StorageManager.loadAllDownloadMetadata(context)
-            val results = DownloadManagerHelper.getDownloadedAndActiveFiles(context, metadata)
-            
-            val sortedResults = results.sortedByDescending { it.pubDate }
-            _downloadedFiles.value = sortedResults
-            
-            // Find last played file from results by NAME
-            val lastName = StorageManager.getLastPlayedName(context)
-            if (lastName != null) {
-                _lastPlayedFile.value = sortedResults.find { it.name == lastName }
-            }
-            
-            // If there are active downloads, ensure polling is running to update UI
-            if (results.any { it.isDownloading }) {
-                withContext(Dispatchers.Main) {
-                    startPollingDownloads(context)
-                }
+        viewModelScope.launch {
+            refreshDownloadedFilesInternal(context)
+        }
+    }
+
+    private suspend fun refreshDownloadedFilesInternal(context: Context) = withContext(Dispatchers.IO) {
+        val metadata = StorageManager.loadAllDownloadMetadata(context)
+        val results = DownloadManagerHelper.getDownloadedAndActiveFiles(context, metadata)
+        
+        val sortedResults = results.sortedByDescending { it.pubDate }
+        _downloadedFiles.value = sortedResults
+        
+        // Find last played file from results by NAME
+        val lastName = StorageManager.getLastPlayedName(context)
+        if (lastName != null) {
+            _lastPlayedFile.value = sortedResults.find { it.name == lastName }
+        }
+        
+        // If there are active downloads, ensure polling is running to update UI
+        if (results.any { it.isDownloading }) {
+            withContext(Dispatchers.Main) {
+                startPollingDownloads(context)
             }
         }
     }
 
     fun follow(context: Context, name: String, url: String, type: String = "YOUTUBE") {
-        val current = _subscriptions.value.toMutableList()
-        if (current.none { it.url == url }) {
-            current.add(Subscription(name, url, type, System.currentTimeMillis()))
-            val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
-            StorageManager.saveSubscriptions(context, sorted)
-            _subscriptions.value = sorted
-            refreshFollowStatus()
-            android.widget.Toast.makeText(context, "Subscribed: $name", android.widget.Toast.LENGTH_SHORT).show()
+        viewModelScope.launch {
+            val current = _subscriptions.value.toMutableList()
+            if (current.none { it.url == url }) {
+                var channelId: String? = null
+                if (type == "YOUTUBE") {
+                    channelId = YouTubeRssManager.getChannelId(url)
+                }
+                current.add(Subscription(name, url, type, System.currentTimeMillis(), youtubeChannelId = channelId))
+                val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+                StorageManager.saveSubscriptions(context, sorted)
+                _subscriptions.value = sorted
+                refreshFollowStatus()
+                android.widget.Toast.makeText(context, "Subscribed: $name", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -473,6 +518,27 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
+                // Try RSS first as it's much faster
+                val channelId = subscription.youtubeChannelId ?: YouTubeRssManager.getChannelId(subscription.url)
+                if (channelId != null) {
+                    val rssResults = YouTubeRssManager.fetchLatestVideos(channelId)
+                    if (rssResults.isNotEmpty()) {
+                        val display = rssResults.take(5).map { syncResultStatus(context, it) }
+                        _searchResults.value = display
+                        channelCache[subscription.url] = rssResults
+                        _hasMore.value = rssResults.size > 5
+                        // Also try to get next page from NewPipe in background to support "Load More"
+                        viewModelScope.launch {
+                            val container = YouTubeManager.fetchChannelInitial(subscription.url, _showYoutubeLive.value, subscription.name)
+                            currentListLinkHandler = container.linkHandler
+                            currentNextPage = container.nextPage
+                        }
+                        _isLoading.value = false
+                        return@launch
+                    }
+                }
+
+                // Fallback to NewPipeExtractor
                 val container = YouTubeManager.fetchChannelInitial(subscription.url, _showYoutubeLive.value, subscription.name)
                 currentListLinkHandler = container.linkHandler
                 currentNextPage = container.nextPage
@@ -492,9 +558,25 @@ class MainViewModel : ViewModel() {
         if (!isNetworkOperationAllowed(context)) return
         viewModelScope.launch {
             _isLoading.value = true
-            val currentSubs = _subscriptions.value
+            
+            // 1. Refresh downloaded files and cleanup metadata for missing files
             withContext(Dispatchers.IO) {
-                currentSubs.forEach { sub ->
+                val metadata = StorageManager.loadAllDownloadMetadata(context)
+                metadata.keys.forEach { fileName ->
+                    if (!DownloadManagerHelper.isFileFullyDownloaded(context, fileName)) {
+                        StorageManager.deleteDownloadMetadata(context, fileName)
+                    }
+                }
+            }
+            refreshDownloadedFilesInternal(context)
+            
+            // 2. Update status tags in existing results
+            _searchResults.value = _searchResults.value.map { syncResultStatus(context, it) }
+            
+            // 3. Update all subscriptions for new content
+            val currentSubsList = _subscriptions.value.toMutableList()
+            withContext(Dispatchers.IO) {
+                currentSubsList.forEachIndexed { index, sub ->
                     try {
                         val results = when (sub.type) {
                             "RSS" -> RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }.take(10)
@@ -506,22 +588,19 @@ class MainViewModel : ViewModel() {
                             val latestItem = results.first()
                             val latestUrl = latestItem.url
                             if (latestUrl != sub.latestItemUrl) {
-                                val current = _subscriptions.value.toMutableList()
-                                val index = current.indexOfFirst { it.url == sub.url }
-                                if (index != -1) {
-                                    current[index] = current[index].copy(
-                                        latestItemUrl = latestUrl, 
-                                        lastUpdated = System.currentTimeMillis(),
-                                        latestItemPubDate = latestItem.pubDate
-                                    )
-                                    _subscriptions.value = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
-                                }
+                                currentSubsList[index] = sub.copy(
+                                    latestItemUrl = latestUrl, 
+                                    lastUpdated = System.currentTimeMillis(),
+                                    latestItemPubDate = latestItem.pubDate
+                                )
                             }
                         }
                     } catch (e: Exception) { }
                 }
+                val sorted = currentSubsList.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+                _subscriptions.value = sorted
                 StorageManager.saveChannelCache(context, channelCache)
-                StorageManager.saveSubscriptions(context, _subscriptions.value)
+                StorageManager.saveSubscriptions(context, sorted)
             }
             _isLoading.value = false
         }
@@ -617,19 +696,156 @@ class MainViewModel : ViewModel() {
             android.widget.Toast.makeText(context, "Mobile data not allowed. Use Wi-Fi.", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
+        // Safety: ensure Listen button doesn't show loading when downloading
+        _loadingUrl.value = null
+        _preparingDownloadUrl.value = result.url
+        
         viewModelScope.launch {
-            val audioUrl = getAudioUrl(context, result)
-            if (audioUrl != null) {
-                val sanitizedName = DownloadManagerHelper.sanitizeFilename(result.name)
-                StorageManager.saveDownloadMetadata(context, sanitizedName, result)
+            val sanitizedName = DownloadManagerHelper.sanitizeFilename(result.name)
+            StorageManager.saveDownloadMetadata(context, sanitizedName, result)
+
+            val isYt = result.source == "YOUTUBE" || (result.url.contains("youtube.com") || result.url.contains("youtu.be"))
+            val isLbry = result.source == "LBRY" || result.url.contains("odysee.com") || result.url.contains("lbry.tv")
+
+            if (isLbry) {
+                // Resolve the best available stream URL
+                val streamUrl = getAudioUrl(context, result)
                 
-                val downloadId = DownloadManagerHelper.enqueueDownload(context, result, audioUrl, _allowMobileData.value)
+                if (streamUrl != null) {
+                    if (streamUrl.contains(".m3u8") || streamUrl.contains("/master.m3u8")) {
+                        // For HLS streams, DownloadManager is useless (0.5kb issue).
+                        // We MUST use YoutubeDLWorker which handles HLS correctly.
+                        val data = workDataOf(
+                            "url" to streamUrl,
+                            "name" to result.name
+                        )
+                        val request = OneTimeWorkRequestBuilder<YoutubeDLWorker>()
+                            .setInputData(data)
+                            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                            .build()
+                        WorkManager.getInstance(context).enqueueUniqueWork(
+                            "ytdl_$sanitizedName",
+                            ExistingWorkPolicy.REPLACE,
+                            request
+                        )
+                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true) else it }
+                        android.widget.Toast.makeText(context, "LBRY HLS Download started", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        // Direct video/audio file. Use DownloadManager + ConversionWorker model.
+                        val downloadId = DownloadManagerHelper.enqueueDownload(context, result, streamUrl, _allowMobileData.value)
+                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
+                        android.widget.Toast.makeText(context, "LBRY Download started", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    android.widget.Toast.makeText(context, "Failed to resolve LBRY link", android.widget.Toast.LENGTH_SHORT).show()
+                }
                 
-                _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
+                _preparingDownloadUrl.value = null
                 refreshDownloadedFiles(context)
                 startPollingDownloads(context)
-                android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            if (isYt) {
+                // Use yt-dlp for YouTube for best reliability and SponsorBlock removal
+                val audioUrl = getAudioUrl(context, result)
+                
+                if (audioUrl != null && audioUrl.contains("googlevideo.com")) {
+                    val downloadId = DownloadManagerHelper.enqueueDownload(context, result, audioUrl, _allowMobileData.value)
+                    _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
+                    android.widget.Toast.makeText(context, "YouTube Download started", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    val data = workDataOf(
+                        "url" to result.url,
+                        "name" to result.name
+                    )
+                    val request = OneTimeWorkRequestBuilder<YoutubeDLWorker>()
+                        .setInputData(data)
+                        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                        .build()
+                    WorkManager.getInstance(context).enqueueUniqueWork(
+                        "ytdl_$sanitizedName",
+                        ExistingWorkPolicy.REPLACE,
+                        request
+                    )
+                    _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true) else it }
+                    android.widget.Toast.makeText(context, "YouTube Download started (yt-dlp)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                
+                _preparingDownloadUrl.value = null
+                refreshDownloadedFiles(context)
+                startPollingDownloads(context)
+                return@launch
+            }
+
+            if (isLbry) {
+                // Fix for LBRY 0.5kb issue: avoid yt-dlp if user prefers, 
+                // but handle HLS properly via FFmpegKit (HlsDownloadWorker).
+                val streamUrl = getAudioUrl(context, result)
+                if (streamUrl != null) {
+                    if (streamUrl.contains(".m3u8") || streamUrl.contains("/master.m3u8")) {
+                        // Route HLS to FFmpeg worker
+                        val data = workDataOf(
+                            "url" to streamUrl,
+                            "name" to result.name
+                        )
+                        val request = OneTimeWorkRequestBuilder<HlsDownloadWorker>()
+                            .setInputData(data)
+                            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                            .build()
+                        WorkManager.getInstance(context).enqueueUniqueWork(
+                            "hls_$sanitizedName",
+                            ExistingWorkPolicy.REPLACE,
+                            request
+                        )
+                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true) else it }
+                        android.widget.Toast.makeText(context, "LBRY HLS Download started", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        // Direct file
+                        val downloadId = DownloadManagerHelper.enqueueDownload(context, result, streamUrl, _allowMobileData.value)
+                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
+                        android.widget.Toast.makeText(context, "LBRY Download started", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    android.widget.Toast.makeText(context, "Failed to get LBRY link", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                
+                _preparingDownloadUrl.value = null
+                refreshDownloadedFiles(context)
+                startPollingDownloads(context)
+                return@launch
+            }
+
+            val audioUrl = getAudioUrl(context, result)
+            if (audioUrl != null) {
+                if (audioUrl.contains(".m3u8")) {
+                    // Route HLS to FFmpeg worker (could also use yt-dlp here, but let's keep it for now or migrate later)
+                    val data = workDataOf(
+                        "url" to audioUrl,
+                        "name" to result.name
+                    )
+                    val request = OneTimeWorkRequestBuilder<HlsDownloadWorker>()
+                        .setInputData(data)
+                        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                        .build()
+                    WorkManager.getInstance(context).enqueueUniqueWork(
+                        "hls_$sanitizedName",
+                        ExistingWorkPolicy.REPLACE,
+                        request
+                    )
+                    _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true) else it }
+                    android.widget.Toast.makeText(context, "HLS Download started", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    val downloadId = DownloadManagerHelper.enqueueDownload(context, result, audioUrl, _allowMobileData.value)
+                    _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
+                    android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                
+                _preparingDownloadUrl.value = null
+                refreshDownloadedFiles(context)
+                startPollingDownloads(context)
             } else {
+                _preparingDownloadUrl.value = null
                 android.widget.Toast.makeText(context, "Failed to get download link", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -641,39 +857,74 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             while (isPollingDownloads) {
-                var activeDownloads = 0
+                var activeWork = 0
                 val currentResults = _searchResults.value
                 val newResults = currentResults.map { result ->
-                    if (result.isDownloading && result.downloadId != null) {
-                        activeDownloads++
-                        val query = DownloadManager.Query().setFilterById(result.downloadId)
-                        val cursor = try { downloadManager.query(query) } catch (e: Exception) { null }
-                        if (cursor != null && cursor.moveToFirst()) {
-                            val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                            val downloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-                            val totalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                    if (result.isDownloading) {
+                        activeWork++
+                        if (result.downloadId != null) {
+                            val query = DownloadManager.Query().setFilterById(result.downloadId)
+                            val cursor = try { downloadManager.query(query) } catch (e: Exception) { null }
+                            if (cursor != null && cursor.moveToFirst()) {
+                                val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                                val downloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                                val totalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                                
+                                if (statusIndex != -1 && downloadedIndex != -1 && totalIndex != -1) {
+                                    val status = cursor.getInt(statusIndex)
+                                    val downloaded = cursor.getLong(downloadedIndex)
+                                    val total = cursor.getLong(totalIndex)
+                                    cursor.close()
+                                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                                        // Trigger conversion once download is complete
+                                        val data = workDataOf("download_id" to result.downloadId!!)
+                                        val convRequest = OneTimeWorkRequestBuilder<ConversionWorker>()
+                                            .setInputData(data)
+                                            .build()
+                                        WorkManager.getInstance(context).enqueue(convRequest)
+
+                                        // Mark as not downloading to stop polling this item
+                                        result.copy(isDownloading = false, isDownloaded = true, downloadProgress = 100)
+                                    } else if (status == DownloadManager.STATUS_FAILED) {
+                                        result.copy(isDownloading = false, downloadProgress = -1)
+                                    } else {
+                                        val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
+                                        val sizeText = if (total > 0) StorageManager.formatFileSize(total) else null
+                                        result.copy(downloadProgress = progress, totalSize = sizeText)
+                                    }
+                                } else { cursor.close(); result }
+                            } else { cursor?.close(); result }
+                        } else {
+                            // Check WorkManager progress for yt-dlp tasks
+                            val workManager = WorkManager.getInstance(context)
+                            val sanitized = DownloadManagerHelper.sanitizeFilename(result.name)
+                            val workInfos = try { workManager.getWorkInfosForUniqueWork("ytdl_$sanitized").get() } catch (e: Exception) { emptyList() }
+                            val workInfo = workInfos.firstOrNull()
                             
-                            if (statusIndex != -1 && downloadedIndex != -1 && totalIndex != -1) {
-                                val status = cursor.getInt(statusIndex)
-                                val downloaded = cursor.getLong(downloadedIndex)
-                                val total = cursor.getLong(totalIndex)
-                                cursor.close()
-                                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                            if (workInfo != null) {
+                                if (workInfo.state == WorkInfo.State.SUCCEEDED) {
                                     result.copy(isDownloading = false, isDownloaded = true, downloadProgress = 100)
-                                } else if (status == DownloadManager.STATUS_FAILED) {
+                                } else if (workInfo.state == WorkInfo.State.FAILED) {
                                     result.copy(isDownloading = false, downloadProgress = -1)
                                 } else {
-                                    val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
-                                    val sizeText = if (total > 0) StorageManager.formatFileSize(total) else null
-                                    result.copy(downloadProgress = progress, totalSize = sizeText)
+                                    val progress = workInfo.progress.getInt("progress", 0)
+                                    result.copy(downloadProgress = progress)
                                 }
-                            } else { cursor.close(); result }
-                        } else { cursor?.close(); result }
+                            } else {
+                                // Fallback: Check if it's still converting or downloading via other WorkManager tasks
+                                val isStillWorking = !DownloadManagerHelper.isFileFullyDownloaded(context, result.name)
+                                if (!isStillWorking) {
+                                    result.copy(isDownloading = false, isDownloaded = true, downloadProgress = 100)
+                                } else {
+                                    result
+                                }
+                            }
+                        }
                     } else result
                 }
                 _searchResults.value = newResults
                 refreshDownloadedFiles(context)
-                if (activeDownloads == 0) { isPollingDownloads = false }
+                if (activeWork == 0) { isPollingDownloads = false }
                 delay(1000)
             }
         }
@@ -697,7 +948,10 @@ class MainViewModel : ViewModel() {
     suspend fun getAudioUrl(context: Context, result: SearchResult): String? {
         if (!isNetworkOperationAllowed(context)) return null
         if (result.isRss) return result.url
-        if (result.source == "LBRY") return LbryManager.getStreamUrl(result.url, result.lbryId, result.lbryName)
+        if (result.source == "LBRY") {
+            val url = LbryManager.getStreamUrl(result.url, result.lbryId, result.lbryName)
+            return url
+        }
         return withContext(Dispatchers.IO) {
             try {
                 val streamInfo = YouTubeManager.getStreamInfo(result.url)
@@ -748,6 +1002,29 @@ class MainViewModel : ViewModel() {
         if (result.isDownloaded) {
             _lastPlayedFile.value = result
         }
+
+        // Fetch SponsorBlock segments for YouTube
+        if (result.source == "YOUTUBE" || (result.url.contains("youtube.com") || result.url.contains("youtu.be"))) {
+            val videoId = extractYoutubeId(result.url)
+            if (videoId != null) {
+                viewModelScope.launch {
+                    _sponsorSegments.value = SponsorBlockManager.fetchSegments(videoId)
+                    lastSkippedSegment = null
+                }
+            } else {
+                _sponsorSegments.value = emptyList()
+            }
+        } else {
+            _sponsorSegments.value = emptyList()
+        }
+    }
+
+    private fun extractYoutubeId(url: String): String? {
+        return when {
+            url.contains("v=") -> url.substringAfter("v=").substringBefore("&")
+            url.contains("youtu.be/") -> url.substringAfter("youtu.be/").substringBefore("?")
+            else -> null
+        }
     }
 
     fun stopPlayback() { _currentPlayback.value = null }
@@ -756,6 +1033,23 @@ class MainViewModel : ViewModel() {
     fun updatePlaybackState(position: Long, duration: Long) {
         _playbackPosition.value = position
         _playbackDuration.value = duration
+    }
+
+    fun checkSponsorSkip(position: Long): Long? {
+        val segments = _sponsorSegments.value
+        if (segments.isEmpty()) return null
+
+        for (segment in segments) {
+            // If current position is inside a segment
+            if (position in segment.start until segment.end) {
+                // Avoid infinite skip loops if user manually seeks into a segment
+                if (lastSkippedSegment == segment) return null
+                
+                lastSkippedSegment = segment
+                return segment.end
+            }
+        }
+        return null
     }
 
     fun saveCurrentPosition(context: Context, explicitPosition: Long? = null) {
@@ -782,6 +1076,12 @@ class MainViewModel : ViewModel() {
     fun updateDuration(durationMs: Long) { 
         _playbackDuration.value = durationMs
         _currentPlayback.value = _currentPlayback.value?.copy(durationText = formatDuration(durationMs)) 
+        // If we were loading, stop now as it's ready
+        _loadingUrl.value = null
+    }
+
+    fun setLoadingUrl(url: String?) {
+        _loadingUrl.value = url
     }
 
     fun restorePlaybackInfo(title: String, uploader: String?, url: String, isPlaying: Boolean, duration: Long) {

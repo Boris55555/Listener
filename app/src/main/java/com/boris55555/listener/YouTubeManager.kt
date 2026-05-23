@@ -88,6 +88,7 @@ object YouTubeManager {
                             url = item.url ?: "",
                             isVideo = item is StreamInfoItem,
                             uploaderName = streamItem?.uploaderName ?: subscriptionName,
+                            uploaderUrl = url,
                             duration = streamItem?.duration ?: -1L,
                             description = streamItem?.shortDescription,
                             pubDate = pubDate,

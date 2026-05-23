@@ -37,7 +37,8 @@ data class SearchResult(
     val downloadDate: Long = 0,
     val mediaType: String? = null,
     val lbryId: String? = null,
-    val lbryName: String? = null
+    val lbryName: String? = null,
+    val isConverting: Boolean = false
 )
 
 data class Subscription(
@@ -46,7 +47,8 @@ data class Subscription(
     val type: String = "YOUTUBE",
     val lastUpdated: Long = 0,
     val latestItemUrl: String? = null,
-    val latestItemPubDate: Long = 0
+    val latestItemPubDate: Long = 0,
+    val youtubeChannelId: String? = null
 )
 
 data class PlaybackInfo(

@@ -17,6 +17,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 
 enum class Screen {
     SUBSCRIPTIONS, DOWNLOADED, SETTINGS, SEARCH
@@ -32,6 +37,30 @@ fun MainScreen(modifier: Modifier = Modifier, viewModel: MainViewModel, exoPlaye
 
     LaunchedEffect(Unit) {
         viewModel.initSubscriptions(context)
+    }
+    
+    // Register receiver to refresh status when download or conversion finishes
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                viewModel.refreshDownloadStatus(context!!)
+            }
+        }
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        filter.addAction("com.boris55555.listener.CONVERSION_REFRESH")
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(
+                receiver,
+                filter,
+                Context.RECEIVER_EXPORTED
+            )
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
     }
 
     // Handle back button to close player if paused

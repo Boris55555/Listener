@@ -26,7 +26,9 @@ fun ResultItem(
     onFollow: () -> Unit,
     onClick: () -> Unit,
     onInfoClick: () -> Unit,
-    showSource: Boolean = true
+    showSource: Boolean = true,
+    isLoadingPlayback: Boolean = false,
+    isPreparingDownload: Boolean = false
 ) {
     val dateFormatter = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US) }
 
@@ -81,7 +83,14 @@ fun ResultItem(
             }
 
             if (result.isVideo) {
-                if (result.isDownloading) {
+                if (result.isConverting) {
+                    Text(
+                        text = "CONVERTING...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else if (result.isDownloading) {
                     val progress = if (result.downloadProgress >= 0) "${result.downloadProgress}%" else "..."
                     Text(
                         text = "DOWNLOADING $progress" + (if (result.totalSize != null) " (${result.totalSize})" else ""),
@@ -116,47 +125,63 @@ fun ResultItem(
             }
         }
 
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            if (result.isVideo) {
-                if (!result.isDownloading) {
-                    Button(
-                        onClick = onPlay,
-                        modifier = Modifier.weight(1f).padding(end = 4.dp).border(1.dp, Color.Black),
-                        shape = RectangleShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) {
-                        Text("LISTEN", fontWeight = FontWeight.Bold)
+        if (!result.isConverting) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                if (result.isVideo) {
+                    if (!result.isDownloading) {
+                        Button(
+                            onClick = onPlay,
+                            modifier = Modifier.weight(1f).padding(end = 4.dp).border(1.dp, Color.Black),
+                            shape = RectangleShape,
+                            enabled = !isLoadingPlayback,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White, 
+                                contentColor = Color.Black,
+                                disabledContainerColor = Color.White,
+                                disabledContentColor = Color.Black
+                            )
+                        ) {
+                            Text(if (isLoadingPlayback) "LOADING..." else "LISTEN", fontWeight = FontWeight.Bold)
+                        }
                     }
-                }
 
-                if (result.isDownloaded || result.isDownloading) {
-                    Button(
-                        onClick = onDelete,
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
-                        shape = RectangleShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) {
-                        Text(if (result.isDownloading) "CANCEL" else "DELETE", fontWeight = FontWeight.Bold)
+                    if (result.isDownloaded || result.isDownloading) {
+                        Button(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
+                            shape = RectangleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White, 
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Text(if (result.isDownloading) "CANCEL" else "DELETE", fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = onDownload,
+                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
+                            enabled = !result.isDownloading && !isPreparingDownload,
+                            shape = RectangleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White, 
+                                contentColor = Color.Black,
+                                disabledContainerColor = Color.White,
+                                disabledContentColor = Color.Black
+                            )
+                        ) {
+                            Text(if (isPreparingDownload) "STARTING..." else "DOWNLOAD", fontWeight = FontWeight.Bold)
+                        }
                     }
                 } else {
                     Button(
-                        onClick = onDownload,
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp).border(1.dp, Color.Black),
-                        enabled = !result.isDownloading,
+                        onClick = onFollow,
+                        modifier = Modifier.weight(1f).border(1.dp, Color.Black),
                         shape = RectangleShape,
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Text("DOWNLOAD", fontWeight = FontWeight.Bold)
+                        Text(if (result.isFollowed) "UNSUBSCRIBE" else "SUBSCRIBE", fontWeight = FontWeight.Bold)
                     }
-                }
-            } else {
-                Button(
-                    onClick = onFollow,
-                    modifier = Modifier.weight(1f).border(1.dp, Color.Black),
-                    shape = RectangleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
-                ) {
-                    Text(if (result.isFollowed) "UNSUBSCRIBE" else "SUBSCRIBE", fontWeight = FontWeight.Bold)
                 }
             }
         }

@@ -27,6 +27,7 @@ fun InfoDialog(
     viewModel: MainViewModel? = null,
     onChannelClick: ((String, String, String) -> Unit)? = null // name, url, source
 ) {
+    val context = LocalContext.current
     var description by remember { mutableStateOf(result.description) }
     var isLoadingDescription by remember { mutableStateOf(false) }
     val subscriptions by viewModel?.subscriptions?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
@@ -118,6 +119,25 @@ fun InfoDialog(
 
                 if (result.isDownloaded && result.totalSize != null) {
                     InfoRow("Size", result.totalSize)
+                }
+
+                if (!isFollowed && result.uploaderUrl != null && viewModel != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            viewModel.follow(
+                                context, 
+                                result.uploaderName ?: "Unknown", 
+                                result.uploaderUrl, 
+                                result.source
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).border(1.dp, Color.Black),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                        shape = RectangleShape
+                    ) {
+                        Text("SUBSCRIBE TO CHANNEL", fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 if (isLoadingDescription) {

@@ -178,7 +178,7 @@ object RssParser {
         return Jsoup.parse(cleaned).text().trim()
     }
 
-    private fun parseDate(dateStr: String): Long {
+    fun parseDate(dateStr: String): Long {
         if (dateStr.isBlank()) return 0L
         val trimmed = dateStr.trim()
         val formats = listOf(

@@ -109,6 +109,9 @@ object DownloadManagerHelper {
     fun getDownloadedAndActiveFiles(context: Context, metadata: Map<String, SearchResult>): List<SearchResult> {
         val results = mutableListOf<SearchResult>()
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val convertingFiles = prefs.getStringSet("converting_files", emptySet()) ?: emptySet()
 
         val extensions = listOf(".m4a", ".mp3", ".mp4", "")
 
@@ -122,8 +125,12 @@ object DownloadManagerHelper {
                 val fileName = if (matchedExt != null) name.removeSuffix(matchedExt) else name
                 
                 if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
+                    val existing = results.find { it.name == fileName }
                     val meta = getMetadataForFile(fileName, metadata)
-                    results.add(SearchResult(
+                    val sanitized = sanitizeFilename(fileName)
+                    val isConv = convertingFiles.contains(sanitized)
+                    
+                    val newResult = SearchResult(
                         name = fileName,
                         url = file.uri.toString(),
                         isVideo = true,
@@ -140,8 +147,17 @@ object DownloadManagerHelper {
                         downloadDate = file.lastModified(),
                         lbryId = meta?.lbryId,
                         lbryName = meta?.lbryName,
-                        mediaType = meta?.mediaType
-                    ))
+                        mediaType = meta?.mediaType,
+                        isConverting = isConv
+                    )
+
+                    if (existing == null) {
+                        results.add(newResult)
+                    } else if (name.endsWith(".mp3") || name.endsWith(".m4a")) {
+                        // Prioritize audio files over video files if both exist for same name
+                        results.remove(existing)
+                        results.add(newResult)
+                    }
                 }
             }
         }
@@ -154,28 +170,38 @@ object DownloadManagerHelper {
                 val matchedExt = extensions.find { it.isNotEmpty() && name.endsWith(it) }
                 val fileName = if (matchedExt != null) name.removeSuffix(matchedExt) else name
                 
-                if (results.none { it.name == fileName }) {
-                    if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
-                        val meta = getMetadataForFile(fileName, metadata)
-                        results.add(SearchResult(
-                            name = fileName,
-                            url = Uri.fromFile(file).toString(),
-                            isVideo = true,
-                            isDownloaded = true,
-                            uploaderName = meta?.uploaderName ?: "Unknown",
-                            uploaderUrl = meta?.uploaderUrl,
-                            isRss = meta?.isRss ?: false,
-                            description = meta?.description ?: "",
-                            duration = meta?.duration ?: -1L,
-                            source = meta?.source ?: "YOUTUBE",
-                            totalSize = StorageManager.formatFileSize(file.length()),
-                            pubDate = meta?.pubDate ?: 0L,
-                            textualDate = meta?.textualDate,
-                            downloadDate = file.lastModified(),
-                            lbryId = meta?.lbryId,
-                            lbryName = meta?.lbryName,
-                            mediaType = meta?.mediaType
-                        ))
+                if (!isCurrentlyDownloading(dm, sanitizeFilename(fileName))) {
+                    val existing = results.find { it.name == fileName }
+                    val meta = getMetadataForFile(fileName, metadata)
+                    val sanitized = sanitizeFilename(fileName)
+                    val isConv = convertingFiles.contains(sanitized)
+                    
+                    val newResult = SearchResult(
+                        name = fileName,
+                        url = Uri.fromFile(file).toString(),
+                        isVideo = true,
+                        isDownloaded = true,
+                        uploaderName = meta?.uploaderName ?: "Unknown",
+                        uploaderUrl = meta?.uploaderUrl,
+                        isRss = meta?.isRss ?: false,
+                        description = meta?.description ?: "",
+                        duration = meta?.duration ?: -1L,
+                        source = meta?.source ?: "YOUTUBE",
+                        totalSize = StorageManager.formatFileSize(file.length()),
+                        pubDate = meta?.pubDate ?: 0L,
+                        textualDate = meta?.textualDate,
+                        downloadDate = file.lastModified(),
+                        lbryId = meta?.lbryId,
+                        lbryName = meta?.lbryName,
+                        mediaType = meta?.mediaType,
+                        isConverting = isConv
+                    )
+
+                    if (existing == null) {
+                        results.add(newResult)
+                    } else if (name.endsWith(".mp3") || name.endsWith(".m4a")) {
+                        results.remove(existing)
+                        results.add(newResult)
                     }
                 }
             }
@@ -244,11 +270,9 @@ object DownloadManagerHelper {
             audioUrl.lowercase().contains(".mp3") -> "mp3" to "audio/mpeg"
             audioUrl.lowercase().contains(".mp4") -> "mp4" to "video/mp4"
             audioUrl.lowercase().contains(".m4a") -> "m4a" to "audio/mp4"
-            audioUrl.lowercase().contains(".m3u8") -> "mp4" to "video/mp4" // Treat HLS as mp4 for filename, though it might fail
+            audioUrl.lowercase().contains(".m3u8") -> "mp4" to "video/mp4"
             isLbry && (mediaType.contains("mp3") || mediaType.contains("audio")) -> "mp3" to "audio/mpeg"
-            isLbry && mediaType.contains("video") -> "mp4" to "video/mp4"
-            isLbry && result.isVideo -> "mp4" to "video/mp4"
-            isLbry -> "mp3" to "audio/mpeg"
+            isLbry -> "mp4" to "video/mp4" // Default to mp4 for LBRY to ensure ConversionWorker picks it up
             else -> "m4a" to "audio/mp4"
         }
 
@@ -352,5 +376,17 @@ object DownloadManagerHelper {
         
         val base = if (sanitized.isEmpty()) "download_${System.currentTimeMillis()}" else sanitized
         return if (base.length > 50) base.take(50).trim('_', '.') else base
+    }
+
+    fun markConverting(context: Context, sanitizedName: String, converting: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val set = prefs.getStringSet("converting_files", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (converting) {
+            set.add(sanitizedName)
+        } else {
+            set.remove(sanitizedName)
+        }
+        prefs.edit().putStringSet("converting_files", set).apply()
+        context.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
     }
 }

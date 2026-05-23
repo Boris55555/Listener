@@ -61,6 +61,7 @@ fun DownloadedScreen(
 ) {
     val results by viewModel.downloadedFiles.collectAsState()
     val lastPlayed by viewModel.lastPlayedFile.collectAsState()
+    val loadingUrl by viewModel.loadingUrl.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -126,7 +127,9 @@ fun DownloadedScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             ResultItem(
                                 result = lp,
+                                isLoadingPlayback = loadingUrl == lp.url,
                                 onPlay = {
+                                    viewModel.setLoadingUrl(lp.url)
                                     playFile(context, lp, viewModel, exoPlayer)
                                 },
                                 onDelete = {
@@ -146,11 +149,13 @@ fun DownloadedScreen(
                 items(results.filter { it.name != lastPlayed?.name }) { result ->
                     ResultItem(
                         result = result,
+                        isLoadingPlayback = loadingUrl == result.url,
                         onPlay = {
                             if (!result.isDownloaded) {
                                 Toast.makeText(context, "Download still in progress", Toast.LENGTH_SHORT).show()
                                 return@ResultItem
                             }
+                            viewModel.setLoadingUrl(result.url)
                             playFile(context, result, viewModel, exoPlayer)
                         },
                         onDownload = {}, // Already handled by showing progress if isDownloading

@@ -47,6 +47,8 @@ fun SearchScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val hasMore by viewModel.hasMore.collectAsState()
     val currentSubscription by viewModel.currentSubscription.collectAsState()
+    val loadingUrl by viewModel.loadingUrl.collectAsState()
+    val preparingDownloadUrl by viewModel.preparingDownloadUrl.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -66,26 +68,6 @@ fun SearchScreen(
         )
     }
 
-    // Register receiver to refresh status when download finishes
-    DisposableEffect(Unit) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                viewModel.refreshDownloadStatus(context!!)
-            }
-        }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                Context.RECEIVER_EXPORTED
-            )
-        } else {
-            context.registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        }
-        onDispose {
-            context.unregisterReceiver(receiver)
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).background(Color.White)) {
         if (currentSubscription == null) {
@@ -234,8 +216,11 @@ fun SearchScreen(
                 ResultItem(
                     result = result,
                     showSource = currentSubscription == null,
+                    isLoadingPlayback = loadingUrl == result.url,
+                    isPreparingDownload = preparingDownloadUrl == result.url,
                     onPlay = {
                         scope.launch {
+                            viewModel.setLoadingUrl(result.url)
                             val localUri = viewModel.getLocalUri(context, result.name)
                             val mediaId = result.name // Consistent mediaId
                             
@@ -259,7 +244,10 @@ fun SearchScreen(
                                     exoPlayer.prepare()
                                     exoPlayer.play()
                                     viewModel.updatePlaybackInfo(result, true)
+                                    viewModel.setLoadingUrl(null)
                                     Toast.makeText(context, "Offline: ${result.name}", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.setLoadingUrl(null)
                                 }
                             } else {
                                 val audioUrl = viewModel.getAudioUrl(context, result)
@@ -288,11 +276,14 @@ fun SearchScreen(
                                         exoPlayer.prepare()
                                         exoPlayer.play()
                                         viewModel.updatePlaybackInfo(result, true)
+                                        // Loading will be cleared in updateDuration or onIsPlayingChanged
                                         Toast.makeText(context, "Playing: ${result.name}", Toast.LENGTH_SHORT).show()
                                     } else {
+                                        viewModel.setLoadingUrl(null)
                                         Toast.makeText(context, "Initializing player...", Toast.LENGTH_SHORT).show()
                                     }
                                 } else {
+                                    viewModel.setLoadingUrl(null)
                                     Toast.makeText(context, "Failed to get audio track", Toast.LENGTH_SHORT).show()
                                 }
                             }

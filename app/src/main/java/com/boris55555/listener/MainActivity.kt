@@ -52,7 +52,10 @@ class MainActivity : ComponentActivity() {
             mediaController?.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     viewModel.setPlaying(isPlaying)
-                    if (!isPlaying) {
+                    if (isPlaying) {
+                        viewModel.setLoadingUrl(null)
+                        startPositionPolling(mediaController)
+                    } else {
                         viewModel.saveCurrentPosition(this@MainActivity, mediaController.currentPosition)
                     }
                 }
@@ -88,6 +91,27 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun startPositionPolling(mediaController: Player) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post(object : Runnable {
+            override fun run() {
+                if (mediaController.isPlaying) {
+                    val pos = mediaController.currentPosition
+                    val duration = mediaController.duration
+                    viewModel.updatePlaybackState(pos, duration)
+                    
+                    val skipTo = viewModel.checkSponsorSkip(pos)
+                    if (skipTo != null) {
+                        mediaController.seekTo(skipTo)
+                        android.widget.Toast.makeText(this@MainActivity, "Sponsor skipped", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    
+                    handler.postDelayed(this, 1000)
+                }
+            }
+        })
     }
 
     override fun onDestroy() {

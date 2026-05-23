@@ -55,20 +55,30 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
             val updatedSubs = subs.map { sub: Subscription ->
                 try {
-                    val (latestUrl, latestTitle) = if (sub.type == "RSS") {
-                        try {
-                            val request = Request.Builder().url(sub.url).header("User-Agent", ListenerApp.USER_AGENT).build()
-                            val response = httpClient.newCall(request).execute()
-                            val body = response.body?.string() ?: ""
-                            val results = RssParser.parseRssItems(body, sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(applicationContext, name) }
-                            val item = results.firstOrNull()
+                    val (latestUrl, latestTitle) = when {
+                        sub.type == "RSS" -> {
+                            try {
+                                val request = Request.Builder().url(sub.url).header("User-Agent", ListenerApp.USER_AGENT).build()
+                                val response = httpClient.newCall(request).execute()
+                                val body = response.body?.string() ?: ""
+                                val results = RssParser.parseRssItems(body, sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(applicationContext, name) }
+                                val item = results.firstOrNull()
+                                Pair(item?.url, item?.name)
+                            } catch (e: Exception) { Pair(null, null) }
+                        }
+                        sub.type == "YOUTUBE" && sub.youtubeChannelId != null -> {
+                            try {
+                                val results = YouTubeRssManager.fetchLatestVideos(sub.youtubeChannelId)
+                                val item = results.firstOrNull()
+                                Pair(item?.url, item?.name)
+                            } catch (e: Exception) { Pair(null, null) }
+                        }
+                        else -> {
+                            val service = ServiceList.YouTube
+                            val container = YouTubeManager.fetchChannelInitial(sub.url, false, sub.name)
+                            val item = container.results.firstOrNull()
                             Pair(item?.url, item?.name)
-                        } catch (e: Exception) { Pair(null, null) }
-                    } else {
-                        val service = ServiceList.YouTube
-                        val container = YouTubeManager.fetchChannelInitial(sub.url, false, sub.name)
-                        val item = container.results.firstOrNull()
-                        Pair(item?.url, item?.name)
+                        }
                     }
 
                     if (latestUrl != null && latestUrl != sub.latestItemUrl) {
