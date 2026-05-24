@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    viewModel.setLoadingUrl(null)
                     android.widget.Toast.makeText(this@MainActivity, "Playback error: ${error.message}", android.widget.Toast.LENGTH_LONG).show()
                 }
 

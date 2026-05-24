@@ -293,7 +293,17 @@ fun SearchScreen(
                         viewModel.startDownload(context, result)
                     },
                     onDelete = {
-                        viewModel.deleteFile(context, result.name)
+                        if (result.isDownloading) {
+                            if (result.downloadId != null) {
+                                viewModel.cancelDownload(context, result.downloadId)
+                            } else {
+                                viewModel.cancelWorkManagerDownload(context, result.name)
+                            }
+                            Toast.makeText(context, "Download cancelled", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.deleteFile(context, result.name)
+                            Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
+                        }
                     },
                     onFollow = {
                         if (result.isFollowed) {

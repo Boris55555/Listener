@@ -18,6 +18,14 @@ object YouTubeRssManager {
             return@withContext url.substringAfter("/channel/").substringBefore("/").substringBefore("?")
         }
         
+        // Use NewPipeExtractor to resolve the ID if possible (more robust)
+        try {
+            val service = org.schabi.newpipe.extractor.ServiceList.YouTube
+            val linkHandler = service.getChannelLHFactory().fromUrl(url)
+            val id = linkHandler.id
+            if (id != null && id.startsWith("UC")) return@withContext id
+        } catch (e: Exception) {}
+
         try {
             val request = Request.Builder()
                 .url(url)

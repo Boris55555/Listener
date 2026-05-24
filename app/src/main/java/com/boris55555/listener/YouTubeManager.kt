@@ -56,50 +56,67 @@ object YouTubeManager {
             var lastNextPage: Page? = null
             var firstTabHandler: ListLinkHandler? = null
             
-            // Refined tab detection for latest YouTube layout
+            // NewPipe fix: YouTube sometimes returns different tab structures or empty first pages.
+            // We iterate through all relevant tabs (Videos, Shorts, Streams) and also fallback 
+            // to "Home" if nothing else is found.
             val tabsToFetch = tabs.filter { tab ->
                 val tabUrl = tab.url ?: ""
                 val url_ = tabUrl.lowercase()
                 url_.endsWith("/videos") || 
                 url_.endsWith("/shorts") || 
                 url_.contains("/streams") ||
-                tab.contentFilters.any { it.contains("video", true) || it.contains("short", true) || (showLive && it.contains("stream", true)) }
+                tab.contentFilters.any { 
+                    it.contains("video", true) || 
+                    it.contains("short", true) || 
+                    (showLive && it.contains("stream", true)) 
+                }
             }.ifEmpty { listOf(tabs.first()) }
 
             tabsToFetch.forEach { tab ->
                 try {
                     if (firstTabHandler == null) firstTabHandler = tab
                     val tabInfo = ChannelTabInfo.getInfo(service, tab)
+                    
+                    val relatedItems = if (tabInfo.relatedItems.isEmpty() && tabInfo.nextPage != null) {
+                        // NewPipe logic: If items are empty but there's a nextPage, fetch it.
+                        ChannelTabInfo.getMoreItems(service, tab, tabInfo.nextPage).items
+                    } else {
+                        tabInfo.relatedItems
+                    }
+
                     if (lastNextPage == null) lastNextPage = tabInfo.nextPage
                     
                     val tabUrl = tab.url ?: ""
                     val isLiveTab = tabUrl.lowercase().contains("streams")
                     val now = System.currentTimeMillis()
                     
-                    tabInfo.relatedItems.forEach { item ->
-                        val streamItem = item as? StreamInfoItem
+                    relatedItems.forEach { item ->
+                        val streamItem = item as? StreamInfoItem ?: return@forEach
                         val name = item.name ?: "Unknown"
-                        val pubDate = streamItem?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
+                        val pubDate = streamItem.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
                         
                         if (isLiveTab && pubDate > now + 3600000) return@forEach 
                         
                         allItems.add(SearchResult(
                             name = name,
                             url = item.url ?: "",
-                            isVideo = item is StreamInfoItem,
-                            uploaderName = streamItem?.uploaderName ?: subscriptionName,
+                            isVideo = true,
+                            uploaderName = streamItem.uploaderName ?: subscriptionName,
                             uploaderUrl = url,
-                            duration = streamItem?.duration ?: -1L,
-                            description = streamItem?.shortDescription,
+                            duration = streamItem.duration,
+                            description = streamItem.shortDescription,
                             pubDate = pubDate,
                             isLive = isLiveTab,
-                            textualDate = streamItem?.textualUploadDate
+                            textualDate = streamItem.textualUploadDate
                         ))
                     }
                 } catch (e: Exception) { e.printStackTrace() }
             }
             
-            SearchResultContainer(allItems.sortedByDescending { it.pubDate }, lastNextPage, firstTabHandler)
+            // Remove duplicates (same URL might appear in different tabs)
+            val uniqueItems = allItems.distinctBy { it.url }.sortedByDescending { it.pubDate }
+            
+            SearchResultContainer(uniqueItems, lastNextPage, firstTabHandler)
         } catch (e: Exception) {
             e.printStackTrace()
             SearchResultContainer(emptyList(), null, null)

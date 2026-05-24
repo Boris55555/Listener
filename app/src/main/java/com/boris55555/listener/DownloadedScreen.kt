@@ -160,8 +160,12 @@ fun DownloadedScreen(
                         },
                         onDownload = {}, // Already handled by showing progress if isDownloading
                         onDelete = {
-                            if (result.isDownloading && result.downloadId != null) {
-                                viewModel.cancelDownload(context, result.downloadId)
+                            if (result.isDownloading) {
+                                if (result.downloadId != null) {
+                                    viewModel.cancelDownload(context, result.downloadId)
+                                } else {
+                                    viewModel.cancelWorkManagerDownload(context, result.name)
+                                }
                                 Toast.makeText(context, "Download cancelled", Toast.LENGTH_SHORT).show()
                             } else {
                                 viewModel.deleteFile(context, result.name)

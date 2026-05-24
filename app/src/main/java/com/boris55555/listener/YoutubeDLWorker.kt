@@ -55,16 +55,26 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
             val request = YoutubeDLRequest(url)
             
-            // Format selection and post-processing
-            request.addOption("-x") // extract audio
+            // Speed and stability optimizations
+            // 1. Force audio-only format to avoid downloading video data
+            request.addOption("-f", "bestaudio/best")
+            
+            // 2. Extract and convert to mp3
+            request.addOption("-x") 
             request.addOption("--audio-format", "mp3")
             request.addOption("--audio-quality", "0")
             request.addOption("-o", outputFilePath)
             
-            // SponsorBlock
+            // 3. SponsorBlock
             request.addOption("--sponsorblock-remove", "sponsor,selfpromo,interaction,intro,outro,preview,music_offtopic,filler")
             
-            // Headers for stability
+            // 4. Maximum speed optimizations
+            request.addOption("-N", "8") // Parallel fragments
+            request.addOption("--buffer-size", "1M") // Larger buffer for faster I/O
+            request.addOption("--hls-prefer-native") // Native HLS is often faster
+            request.addOption("--no-mtime")
+            
+            // 5. Headers for stability
             request.addOption("--user-agent", ListenerApp.USER_AGENT)
             
             if (url.contains("youtube.com") || url.contains("youtu.be")) {

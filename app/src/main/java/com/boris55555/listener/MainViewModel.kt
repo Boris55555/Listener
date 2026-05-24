@@ -939,7 +939,27 @@ class MainViewModel : ViewModel() {
     fun cancelDownload(context: Context, downloadId: Long) {
         val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         downloadManager.remove(downloadId)
+        
+        // Also cancel any WorkManager tasks with this ID (if it's a YoutubeDL/HLS task)
+        // Note: For WorkManager tasks, we usually use the unique name we assigned during enqueue
+        // But for generic cleanup, we'll ensure search results update immediately.
+        
         _searchResults.value = _searchResults.value.map { if (it.downloadId == downloadId) it.copy(isDownloading = false, downloadProgress = -1) else it }
+        refreshDownloadedFiles(context)
+    }
+
+    fun cancelWorkManagerDownload(context: Context, name: String) {
+        val workManager = WorkManager.getInstance(context)
+        val sanitized = DownloadManagerHelper.sanitizeFilename(name)
+        
+        // Cancel both possible unique work names
+        workManager.cancelUniqueWork("ytdl_$sanitized")
+        workManager.cancelUniqueWork("hls_$sanitized")
+        
+        _searchResults.value = _searchResults.value.map { if (it.name == name) it.copy(isDownloading = false, downloadProgress = -1) else it }
+        
+        // Mark conversion as finished/stopped in prefs to clear UI
+        DownloadManagerHelper.markConverting(context, sanitized, false)
         refreshDownloadedFiles(context)
     }
 
@@ -952,45 +972,60 @@ class MainViewModel : ViewModel() {
             val url = LbryManager.getStreamUrl(result.url, result.lbryId, result.lbryName)
             return url
         }
-        return withContext(Dispatchers.IO) {
+        
+        // Use a retry mechanism for YouTube as extraction can be flaky
+        var lastError: Exception? = null
+        for (attempt in 1..3) {
             try {
-                val streamInfo = YouTubeManager.getStreamInfo(result.url)
-                val audioStreams = streamInfo.audioStreams ?: return@withContext null
+                if (attempt > 1) {
+                    android.util.Log.d("MainViewModel", "Retrying audio URL fetch, attempt $attempt")
+                    kotlinx.coroutines.delay(500L * attempt) // Exponential-ish backoff
+                }
                 
-                // 1. Prioritize ORIGINAL audio tracks
-                val originalStreams = audioStreams.filter { it.audioTrackType == AudioTrackType.ORIGINAL }
-                val candidates = if (originalStreams.isNotEmpty()) originalStreams else audioStreams
-                
-                // 2. Filter out dubbed tracks if possible
-                val nonDubbed = candidates.filter { it.audioTrackType != AudioTrackType.DUBBED }
-                val pool = if (nonDubbed.isNotEmpty()) nonDubbed else candidates
+                val url = withContext(Dispatchers.IO) {
+                    val streamInfo = YouTubeManager.getStreamInfo(result.url)
+                    val audioStreams = streamInfo.audioStreams ?: return@withContext null
+                    
+                    // 1. Prioritize ORIGINAL audio tracks
+                    val originalStreams = audioStreams.filter { it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL }
+                    val candidates = if (originalStreams.isNotEmpty()) originalStreams else audioStreams
+                    
+                    // 2. Filter out dubbed tracks if possible
+                    val nonDubbed = candidates.filter { it.audioTrackType != org.schabi.newpipe.extractor.stream.AudioTrackType.DUBBED }
+                    val pool = if (nonDubbed.isNotEmpty()) nonDubbed else candidates
 
-                // 3. For YouTube, prioritize PROGRESSIVE streams (better for simple downloading/seeking)
-                // Use reflection to avoid direct DeliveryMethod enum reference issues in some builds
-                val progressive = pool.filter { 
-                    try {
-                        val method = it.javaClass.getMethod("getDeliveryMethod")
-                        method.invoke(it).toString() == "PROGRESSIVE"
-                    } catch (e: Exception) { false }
+                    // 3. For YouTube, prioritize PROGRESSIVE streams (better for simple downloading/seeking)
+                    // Use reflection to avoid direct DeliveryMethod enum reference issues in some builds
+                    val progressive = pool.filter { 
+                        try {
+                            val method = it.javaClass.getMethod("getDeliveryMethod")
+                            method.invoke(it).toString().contains("PROGRESSIVE")
+                        } catch (e: Exception) { false }
+                    }
+                    val finalPool = if (progressive.isNotEmpty()) progressive else pool
+                    
+                    // 4. Prioritize M4A format within the candidates
+                    val m4aStreams = finalPool.filter { it.format?.suffix == "m4a" }
+                    val targetBitrate = 160000 // 160 kbps balance
+                    
+                    val bestStream = if (m4aStreams.isNotEmpty()) {
+                        m4aStreams.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                    } else {
+                        finalPool.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                    }
+                    
+                    bestStream?.content
                 }
-                val finalPool = if (progressive.isNotEmpty()) progressive else pool
                 
-                // 4. Prioritize M4A format within the candidates
-                val m4aStreams = finalPool.filter { it.format?.suffix == "m4a" }
-                val targetBitrate = 160000 // 160 kbps balance
-                
-                val bestStream = if (m4aStreams.isNotEmpty()) {
-                    m4aStreams.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
-                } else {
-                    finalPool.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
-                }
-                
-                bestStream?.content
-            } catch (e: Exception) { 
-                e.printStackTrace()
-                null 
+                if (url != null) return url
+            } catch (e: Exception) {
+                lastError = e
+                android.util.Log.w("MainViewModel", "Attempt $attempt failed to fetch audio URL: ${e.message}")
             }
         }
+        
+        lastError?.printStackTrace()
+        return null
     }
 
     fun updatePlaybackInfo(result: SearchResult, isPlaying: Boolean, durationMs: Long = -1) {
