@@ -105,7 +105,8 @@ class MainViewModel : ViewModel() {
             val subs = withContext(Dispatchers.IO) {
                 StorageManager.loadSubscriptions(context)
             }
-            _subscriptions.value = subs.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+            // Strict sorting by publication date first, then name to keep it stable
+            _subscriptions.value = subs.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenBy { it.name })
             
             withContext(Dispatchers.IO) {
                 channelCache.putAll(StorageManager.loadChannelCache(context))
@@ -158,7 +159,7 @@ class MainViewModel : ViewModel() {
                     }
                 }
                 StorageManager.saveSubscriptions(context, updated)
-                _subscriptions.value = updated.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+                _subscriptions.value = updated.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenBy { it.name })
             }
         }
     }
@@ -294,7 +295,7 @@ class MainViewModel : ViewModel() {
                     channelId = YouTubeRssManager.getChannelId(url)
                 }
                 current.add(Subscription(name, url, type, System.currentTimeMillis(), youtubeChannelId = channelId))
-                val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+                val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenBy { it.name })
                 StorageManager.saveSubscriptions(context, sorted)
                 _subscriptions.value = sorted
                 refreshFollowStatus()
@@ -307,7 +308,7 @@ class MainViewModel : ViewModel() {
         val current = _subscriptions.value.toMutableList()
         val sub = current.find { it.url == url }
         current.removeAll { it.url == url }
-        val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+        val sorted = current.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenBy { it.name })
         StorageManager.saveSubscriptions(context, sorted)
         _subscriptions.value = sorted
         refreshFollowStatus()
@@ -468,6 +469,8 @@ class MainViewModel : ViewModel() {
         _searchResults.value = emptyList()
         _currentSubscription.value = subscription
         currentSearchQuery = null
+        currentNextPage = null
+        currentListLinkHandler = null
 
         viewModelScope.launch {
             _isLoading.value = true
@@ -478,7 +481,29 @@ class MainViewModel : ViewModel() {
                     display.map { syncResultStatus(context, it) }
                 }
                 _searchResults.value = synced
-                _hasMore.value = cached.size > 5 || (subscription.type != "RSS" && currentNextPage != null)
+                _hasMore.value = cached.size > 5 || subscription.type == "YOUTUBE" || subscription.type == "LBRY"
+                
+                // If it's YouTube/LBRY, we need to fetch the channel info anyway to get pagination headers
+                if (subscription.type == "YOUTUBE" || subscription.type == "LBRY") {
+                    viewModelScope.launch {
+                        try {
+                            val container = if (subscription.type == "YOUTUBE") {
+                                YouTubeManager.fetchChannelInitial(subscription.url, _showYoutubeLive.value, subscription.name)
+                            } else {
+                                LbryManager.fetchChannelInitial(subscription.url, subscription.name)
+                            }
+                            currentListLinkHandler = container.linkHandler
+                            currentNextPage = container.nextPage
+                            
+                            // Merge background fetch with current results to ensure cache is fresh
+                            val merged = (cached + container.results).distinctBy { it.url }.sortedByDescending { it.pubDate }
+                            channelCache[subscription.url] = merged
+                            
+                            _hasMore.value = merged.size > 5 || container.nextPage != null
+                        } catch (e: Exception) {}
+                    }
+                }
+                
                 _isLoading.value = false
                 return@launch
             }
@@ -505,10 +530,11 @@ class MainViewModel : ViewModel() {
             try {
                 val container = LbryManager.fetchChannelInitial(subscription.url, subscription.name)
                 val results = container.results
+                currentNextPage = container.nextPage
                 val display = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = display
                 channelCache[subscription.url] = results 
-                _hasMore.value = results.size > 5
+                _hasMore.value = results.size > 5 || container.nextPage != null
                 StorageManager.saveChannelCache(context, channelCache)
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
@@ -532,6 +558,7 @@ class MainViewModel : ViewModel() {
                             val container = YouTubeManager.fetchChannelInitial(subscription.url, _showYoutubeLive.value, subscription.name)
                             currentListLinkHandler = container.linkHandler
                             currentNextPage = container.nextPage
+                            _hasMore.value = rssResults.size > 5 || container.nextPage != null
                         }
                         _isLoading.value = false
                         return@launch
@@ -579,7 +606,7 @@ class MainViewModel : ViewModel() {
                 currentSubsList.forEachIndexed { index, sub ->
                     try {
                         val results = when (sub.type) {
-                            "RSS" -> RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }.take(10)
+                            "RSS" -> RssParser.fetchRssItems(sub.url) { name -> DownloadManagerHelper.isFileFullyDownloaded(context, name) }
                             "LBRY" -> LbryManager.fetchChannelInitial(sub.url, sub.name).results.take(10)
                             else -> YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name).results.take(10)
                         }
@@ -597,7 +624,7 @@ class MainViewModel : ViewModel() {
                         }
                     } catch (e: Exception) { }
                 }
-                val sorted = currentSubsList.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenByDescending { it.lastUpdated })
+                val sorted = currentSubsList.sortedWith(compareByDescending<Subscription> { it.latestItemPubDate }.thenBy { it.name })
                 _subscriptions.value = sorted
                 StorageManager.saveChannelCache(context, channelCache)
                 StorageManager.saveSubscriptions(context, sorted)
@@ -612,60 +639,111 @@ class MainViewModel : ViewModel() {
             return
         }
         val sub = _currentSubscription.value ?: return
-        val currentResults = _searchResults.value
         
         viewModelScope.launch {
+            if (_isLoading.value) return@launch
             _isLoading.value = true
+            
             try {
+                val currentList = _searchResults.value
                 val cachedFull = channelCache[sub.url] ?: emptyList()
                 
-                if (sub.type == "RSS" || sub.type == "LBRY") {
-                    val nextFive = cachedFull.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
-                    if (nextFive.isNotEmpty()) {
-                        val newList = currentResults + nextFive
+                // 1. If we have more items already in the cache, show them first
+                if (cachedFull.size > currentList.size) {
+                    val nextBatch = cachedFull.drop(currentList.size).take(5).map { syncResultStatus(context, it) }
+                    val newList = currentList + nextBatch
+                    _searchResults.value = newList
+                    // Button remains if there's more in cache OR more on network (for YouTube/LBRY)
+                    _hasMore.value = newList.size < cachedFull.size || (sub.type != "RSS")
+                    _isLoading.value = false
+                    return@launch
+                }
+
+                // 2. Cache exhausted, try to fetch new page from network (YouTube/LBRY)
+                if (sub.type == "RSS") {
+                    _hasMore.value = false
+                    _isLoading.value = false
+                    return@launch
+                }
+
+                // If pagination data is missing, try to initialize it
+                if (currentNextPage == null) {
+                    val container = if (sub.type == "LBRY") {
+                        LbryManager.fetchChannelInitial(sub.url, sub.name, 1)
+                    } else {
+                        YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name)
+                    }
+                    currentListLinkHandler = container.linkHandler
+                    currentNextPage = container.nextPage
+                    
+                    // Update cache with results from page 1 (might have more than we had)
+                    val merged = (cachedFull + container.results).distinctBy { it.url }.sortedByDescending { it.pubDate }
+                    channelCache[sub.url] = merged
+                    
+                    // If we found more items on page 1 than we were showing, show them instead of fetching page 2 yet
+                    if (merged.size > currentList.size) {
+                        val nextBatch = merged.drop(currentList.size).take(5).map { syncResultStatus(context, it) }
+                        val newList = currentList + nextBatch
                         _searchResults.value = newList
-                        _hasMore.value = cachedFull.size > newList.size
-                    } else { _hasMore.value = false }
-                } else {
-                    val page = currentNextPage 
-                    // If we have more items in the already fetched batch from NewPipe, use them
-                    if (cachedFull.size > currentResults.size) {
-                        val nextFive = cachedFull.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
-                        _searchResults.value = currentResults + nextFive
-                        _hasMore.value = cachedFull.size > (currentResults.size + 5) || page != null
+                        _hasMore.value = newList.size < merged.size || currentNextPage != null
                         _isLoading.value = false
                         return@launch
                     }
+                }
 
-                    if (page == null) {
+                // Now actually fetch next page from network
+                val page = currentNextPage
+                if (page == null) {
+                    _hasMore.value = false
+                    _isLoading.value = false
+                    return@launch
+                }
+
+                val moreResults = if (sub.type == "LBRY") {
+                    val nextPageNum = (page.id.toIntOrNull() ?: 1) + 1
+                    val container = LbryManager.fetchChannelInitial(sub.url, sub.name, nextPageNum)
+                    currentNextPage = container.nextPage
+                    container.results
+                } else {
+                    if (currentListLinkHandler == null) {
                         _hasMore.value = false
                         _isLoading.value = false
                         return@launch
                     }
-
                     val moreInfo = ChannelTabInfo.getMoreItems(ServiceList.YouTube, currentListLinkHandler!!, page)
                     currentNextPage = moreInfo.nextPage
-                    val moreResults = moreInfo.items.map { item ->
-                        val streamItem = item as? StreamInfoItem
+                    moreInfo.items.filterIsInstance<StreamInfoItem>().map { item ->
                         val name = item.name ?: "Unknown"
-                        val pubDate = streamItem?.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
+                        val pubDate = item.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L
                         SearchResult(
                             name = name, 
                             url = item.url ?: "", 
-                            isVideo = item is StreamInfoItem, 
-                            uploaderName = streamItem?.uploaderName ?: sub.name, 
-                            duration = streamItem?.duration ?: -1L, 
+                            isVideo = true, 
+                            uploaderName = item.uploaderName ?: sub.name, 
+                            duration = item.duration, 
                             pubDate = pubDate,
-                            textualDate = streamItem?.textualUploadDate
+                            textualDate = item.textualUploadDate
                         )
                     }
-                    val combined = cachedFull + moreResults
-                    val syncedMore = combined.sortedByDescending { it.pubDate }.drop(currentResults.size).take(5).map { syncResultStatus(context, it) }
-                    _searchResults.value = currentResults + syncedMore
-                    channelCache[sub.url] = combined
-                    _hasMore.value = moreResults.size > 5 || moreInfo.nextPage != null
                 }
-            } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
+
+                if (moreResults.isEmpty()) {
+                    _hasMore.value = false
+                } else {
+                    val updatedCache = (cachedFull + moreResults).distinctBy { it.url }.sortedByDescending { it.pubDate }
+                    channelCache[sub.url] = updatedCache
+                    
+                    val nextBatch = moreResults.take(5).map { syncResultStatus(context, it) }
+                    val newList = currentList + nextBatch
+                    _searchResults.value = newList
+                    _hasMore.value = true // We just got a new page, likely more exists
+                }
+            } catch (e: Exception) { 
+                e.printStackTrace() 
+                _hasMore.value = false
+            } finally { 
+                _isLoading.value = false 
+            }
         }
     }
 
@@ -696,10 +774,8 @@ class MainViewModel : ViewModel() {
             android.widget.Toast.makeText(context, "Mobile data not allowed. Use Wi-Fi.", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        // Safety: ensure Listen button doesn't show loading when downloading
-        _loadingUrl.value = null
+        _loadingUrl.value = null // Safety: ensure Listen button doesn't show loading
         _preparingDownloadUrl.value = result.url
-        
         viewModelScope.launch {
             val sanitizedName = DownloadManagerHelper.sanitizeFilename(result.name)
             StorageManager.saveDownloadMetadata(context, sanitizedName, result)
@@ -778,44 +854,6 @@ class MainViewModel : ViewModel() {
                 return@launch
             }
 
-            if (isLbry) {
-                // Fix for LBRY 0.5kb issue: avoid yt-dlp if user prefers, 
-                // but handle HLS properly via FFmpegKit (HlsDownloadWorker).
-                val streamUrl = getAudioUrl(context, result)
-                if (streamUrl != null) {
-                    if (streamUrl.contains(".m3u8") || streamUrl.contains("/master.m3u8")) {
-                        // Route HLS to FFmpeg worker
-                        val data = workDataOf(
-                            "url" to streamUrl,
-                            "name" to result.name
-                        )
-                        val request = OneTimeWorkRequestBuilder<HlsDownloadWorker>()
-                            .setInputData(data)
-                            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                            .build()
-                        WorkManager.getInstance(context).enqueueUniqueWork(
-                            "hls_$sanitizedName",
-                            ExistingWorkPolicy.REPLACE,
-                            request
-                        )
-                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true) else it }
-                        android.widget.Toast.makeText(context, "LBRY HLS Download started", android.widget.Toast.LENGTH_SHORT).show()
-                    } else {
-                        // Direct file
-                        val downloadId = DownloadManagerHelper.enqueueDownload(context, result, streamUrl, _allowMobileData.value)
-                        _searchResults.value = _searchResults.value.map { if (it.url == result.url) it.copy(isDownloading = true, downloadId = downloadId) else it }
-                        android.widget.Toast.makeText(context, "LBRY Download started", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    android.widget.Toast.makeText(context, "Failed to get LBRY link", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                
-                _preparingDownloadUrl.value = null
-                refreshDownloadedFiles(context)
-                startPollingDownloads(context)
-                return@launch
-            }
-
             val audioUrl = getAudioUrl(context, result)
             if (audioUrl != null) {
                 if (audioUrl.contains(".m3u8")) {
@@ -877,7 +915,7 @@ class MainViewModel : ViewModel() {
                                     cursor.close()
                                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                                         // Trigger conversion once download is complete
-                                        val data = workDataOf("download_id" to result.downloadId!!)
+                                        val data = workDataOf("download_id" to result.downloadId)
                                         val convRequest = OneTimeWorkRequestBuilder<ConversionWorker>()
                                             .setInputData(data)
                                             .build()

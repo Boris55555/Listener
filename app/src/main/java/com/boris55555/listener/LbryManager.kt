@@ -181,7 +181,7 @@ object LbryManager {
         }
     }
 
-    suspend fun fetchChannelInitial(url: String, subscriptionName: String): SearchResultContainer = withContext(Dispatchers.IO) {
+    suspend fun fetchChannelInitial(url: String, subscriptionName: String, page: Int = 1): SearchResultContainer = withContext(Dispatchers.IO) {
         try {
             val channelId = if (url.startsWith("lbry://")) {
                 url.split("#").last()
@@ -195,8 +195,8 @@ object LbryManager {
             val params = JSONObject()
             params.put("channel_id", channelId)
             params.put("order_by", JSONArray(listOf("release_time")))
-            params.put("page", 1)
-            params.put("page_size", 20)
+            params.put("page", page)
+            params.put("page_size", 30)
             json.put("params", params)
             json.put("id", System.currentTimeMillis())
 
@@ -212,7 +212,9 @@ object LbryManager {
             if (!response.isSuccessful) return@withContext SearchResultContainer(emptyList(), null, null)
 
             val responseBody = response.body?.string() ?: return@withContext SearchResultContainer(emptyList(), null, null)
-            val items = JSONObject(responseBody).getJSONObject("result").getJSONArray("items")
+            val resultObj = JSONObject(responseBody).getJSONObject("result")
+            val items = resultObj.getJSONArray("items")
+            val totalPages = resultObj.optInt("total_pages", page)
             
             val channelUrl = if (url.startsWith("lbry://")) url else "lbry://$url"
             
@@ -241,7 +243,9 @@ object LbryManager {
                     lbryName = name
                 ))
             }
-            SearchResultContainer(results, null, null)
+            // Use a custom Page implementation for LBRY
+            val nextPage = if (page < totalPages) org.schabi.newpipe.extractor.Page(url, "$page") else null
+            SearchResultContainer(results, nextPage, null)
         } catch (e: Exception) {
             e.printStackTrace()
             SearchResultContainer(emptyList(), null, null)
