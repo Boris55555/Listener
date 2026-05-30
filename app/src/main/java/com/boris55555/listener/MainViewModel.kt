@@ -46,6 +46,9 @@ class MainViewModel : ViewModel() {
     private val _preparingDownloadUrl = MutableStateFlow<String?>(null)
     val preparingDownloadUrl: StateFlow<String?> = _preparingDownloadUrl
 
+    private val _backoffRemaining = MutableStateFlow<Map<String, Float>>(emptyMap())
+    val backoffRemaining: StateFlow<Map<String, Float>> = _backoffRemaining
+
     private val _hasMore = MutableStateFlow(false)
     val hasMore: StateFlow<Boolean> = _hasMore
 
@@ -1011,54 +1014,126 @@ class MainViewModel : ViewModel() {
             return url
         }
         
+        val isYoutube = result.source == "YOUTUBE" || result.url.contains("youtube.com") || result.url.contains("youtu.be")
+        
         // Use a retry mechanism for YouTube as extraction can be flaky
         var lastError: Exception? = null
         for (attempt in 1..3) {
             try {
-                if (attempt > 1) {
+                if (isYoutube && attempt == 1) {
+                    // Pre-emptive backoff as requested by user to simulate FreeTube's SABR backoff
+                    // This helps avoid immediate 429s and throttling. Increased to 5s for reliability.
+                    val backoffSeconds = 5.0f
+                    val steps = 50
+                    for (i in 1..steps) { 
+                        val remaining = backoffSeconds - (i * 0.1f)
+                        _backoffRemaining.value = _backoffRemaining.value + (result.url to remaining)
+                        delay(100)
+                    }
+                    _backoffRemaining.value = _backoffRemaining.value - result.url
+                } else if (attempt > 1) {
                     android.util.Log.d("MainViewModel", "Retrying audio URL fetch, attempt $attempt")
-                    kotlinx.coroutines.delay(500L * attempt) // Exponential-ish backoff
+                    delay(1500L * attempt) // Exponential backoff between retries
                 }
                 
                 val url = withContext(Dispatchers.IO) {
-                    val streamInfo = YouTubeManager.getStreamInfo(result.url)
-                    val audioStreams = streamInfo.audioStreams ?: return@withContext null
-                    
-                    // 1. Prioritize ORIGINAL audio tracks
-                    val originalStreams = audioStreams.filter { it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL }
-                    val candidates = if (originalStreams.isNotEmpty()) originalStreams else audioStreams
-                    
-                    // 2. Filter out dubbed tracks if possible
-                    val nonDubbed = candidates.filter { it.audioTrackType != org.schabi.newpipe.extractor.stream.AudioTrackType.DUBBED }
-                    val pool = if (nonDubbed.isNotEmpty()) nonDubbed else candidates
-
-                    // 3. For YouTube, prioritize PROGRESSIVE streams (better for simple downloading/seeking)
-                    // Use reflection to avoid direct DeliveryMethod enum reference issues in some builds
-                    val progressive = pool.filter { 
+                    // Primary method: NewPipeExtractor
+                    try {
+                        val streamInfo = YouTubeManager.getStreamInfo(result.url)
+                        val audioStreams = streamInfo.audioStreams ?: emptyList()
+                        val videoStreams = streamInfo.videoStreams ?: emptyList()
+                        
+                        // Combine audio and video streams (ExoPlayer can play video as audio)
+                        val audioPool = audioStreams.filterNotNull()
+                        val videoPool = videoStreams.filterNotNull()
+                        
+                        if (audioPool.isEmpty() && videoPool.isEmpty()) throw Exception("No playable streams found via NewPipe")
+                        
+                        // Select best audio stream if available, fallback to video
+                        val bestStream = if (audioPool.isNotEmpty()) {
+                            val original = audioPool.filter { it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL }.ifEmpty { audioPool }
+                            val opus = original.filter { it.format?.suffix == "webm" || it.format?.name?.contains("opus", true) == true }
+                            val m4a = original.filter { it.format?.suffix == "m4a" }
+                            
+                            val targetBitrate = 160000 
+                            when {
+                                opus.isNotEmpty() -> opus.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                                m4a.isNotEmpty() -> m4a.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                                else -> original.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
+                            }
+                        } else {
+                            // Fallback to video stream
+                            videoPool.minByOrNull { 
+                                // Prefer lower resolutions for audio-only to save bandwidth
+                                when (it.resolution) {
+                                    "144p" -> 1
+                                    "240p" -> 2
+                                    "360p" -> 3
+                                    else -> 10
+                                }
+                            }
+                        }
+                        
+                        bestStream?.content ?: throw Exception("No suitable stream content found")
+                    } catch (e: Exception) {
+                        android.util.Log.w("MainViewModel", "NewPipe extraction failed, trying yt-dlp fallback: ${e.message}")
+                        
+                        // Fallback method: yt-dlp
                         try {
-                            val method = it.javaClass.getMethod("getDeliveryMethod")
-                            method.invoke(it).toString().contains("PROGRESSIVE")
-                        } catch (e: Exception) { false }
+                            val ytdl = com.yausername.youtubedl_android.YoutubeDL.getInstance()
+                            
+                            // More robust initialization with logging
+                            try {
+                                val initResult = ytdl.init(context.applicationContext)
+                                android.util.Log.d("MainViewModel", "yt-dlp init result: $initResult")
+                            } catch (initEx: Exception) {
+                                if (initEx.message?.contains("already initialized", true) == true) {
+                                    // OK
+                                } else {
+                                    android.util.Log.e("MainViewModel", "yt-dlp init failed: ${initEx.message}")
+                                }
+                            }
+                            
+                            val request = com.yausername.youtubedl_android.YoutubeDLRequest(result.url)
+                            // Use mobile-friendly options for yt-dlp fallback
+                            // -f bestaudio/best tries to get audio only, fallback to video if needed
+                            request.addOption("-f", "bestaudio/best")
+                            request.addOption("-g") // Get URL only
+                            request.addOption("--no-playlist")
+                            request.addOption("--user-agent", ListenerApp.USER_AGENT)
+                            // Add basic headers to yt-dlp too
+                            request.addOption("--add-header", "Accept-Language:en-US,en;q=0.9")
+                            
+                            val response = ytdl.execute(request)
+                            if (response.exitCode == 0) {
+                                // Take the first URL from output (yt-dlp -g can return multiple if requested)
+                                val extractedUrl = response.out.trim().lines().firstOrNull { it.startsWith("http") }
+                                android.util.Log.d("MainViewModel", "yt-dlp successfully extracted URL")
+                                extractedUrl
+                            } else {
+                                android.util.Log.e("MainViewModel", "yt-dlp returned exit code ${response.exitCode}. Output: ${response.out}")
+                                null
+                            }
+                        } catch (ex: Exception) {
+                            android.util.Log.e("MainViewModel", "yt-dlp execution failed: ${ex.message}")
+                            null
+                        }
                     }
-                    val finalPool = if (progressive.isNotEmpty()) progressive else pool
-                    
-                    // 4. Prioritize M4A format within the candidates
-                    val m4aStreams = finalPool.filter { it.format?.suffix == "m4a" }
-                    val targetBitrate = 160000 // 160 kbps balance
-                    
-                    val bestStream = if (m4aStreams.isNotEmpty()) {
-                        m4aStreams.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
-                    } else {
-                        finalPool.minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
-                    }
-                    
-                    bestStream?.content
                 }
                 
                 if (url != null) return url
             } catch (e: Exception) {
                 lastError = e
                 android.util.Log.w("MainViewModel", "Attempt $attempt failed to fetch audio URL: ${e.message}")
+                if (e is org.schabi.newpipe.extractor.exceptions.ReCaptchaException) {
+                    // Hit a 429, mandatory long backoff
+                    val waitTime = 5
+                    for (i in waitTime downTo 1) {
+                        _backoffRemaining.value = _backoffRemaining.value + (result.url to i.toFloat())
+                        delay(1000)
+                    }
+                    _backoffRemaining.value = _backoffRemaining.value - result.url
+                }
             }
         }
         

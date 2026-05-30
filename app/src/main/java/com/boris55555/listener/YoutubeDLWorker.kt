@@ -31,6 +31,12 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
         Log.d("YoutubeDLWorker", "Starting yt-dlp download: $url")
 
         try {
+            // Mandatory SABR backoff wait for YouTube to avoid throttling
+            if (url.contains("youtube.com") || url.contains("youtu.be")) {
+                Log.d("YoutubeDLWorker", "Applying 3s SABR backoff wait")
+                delay(3000)
+            }
+
             // Robust initialization check
             var initSuccessful = false
             for (attempt in 1..3) {

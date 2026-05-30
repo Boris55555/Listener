@@ -49,6 +49,7 @@ fun SearchScreen(
     val currentSubscription by viewModel.currentSubscription.collectAsState()
     val loadingUrl by viewModel.loadingUrl.collectAsState()
     val preparingDownloadUrl by viewModel.preparingDownloadUrl.collectAsState()
+    val backoffMap by viewModel.backoffRemaining.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -218,6 +219,7 @@ fun SearchScreen(
                     showSource = currentSubscription == null,
                     isLoadingPlayback = loadingUrl == result.url,
                     isPreparingDownload = preparingDownloadUrl == result.url,
+                    backoffRemaining = backoffMap[result.url],
                     onPlay = {
                         scope.launch {
                             viewModel.setLoadingUrl(result.url)

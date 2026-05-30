@@ -62,6 +62,7 @@ fun DownloadedScreen(
     val results by viewModel.downloadedFiles.collectAsState()
     val lastPlayed by viewModel.lastPlayedFile.collectAsState()
     val loadingUrl by viewModel.loadingUrl.collectAsState()
+    val backoffMap by viewModel.backoffRemaining.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -128,6 +129,7 @@ fun DownloadedScreen(
                             ResultItem(
                                 result = lp,
                                 isLoadingPlayback = loadingUrl == lp.url,
+                                backoffRemaining = backoffMap[lp.url],
                                 onPlay = {
                                     viewModel.setLoadingUrl(lp.url)
                                     playFile(context, lp, viewModel, exoPlayer)
@@ -150,6 +152,7 @@ fun DownloadedScreen(
                     ResultItem(
                         result = result,
                         isLoadingPlayback = loadingUrl == result.url,
+                        backoffRemaining = backoffMap[result.url],
                         onPlay = {
                             if (!result.isDownloaded) {
                                 Toast.makeText(context, "Download still in progress", Toast.LENGTH_SHORT).show()

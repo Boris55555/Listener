@@ -28,7 +28,8 @@ fun ResultItem(
     onInfoClick: () -> Unit,
     showSource: Boolean = true,
     isLoadingPlayback: Boolean = false,
-    isPreparingDownload: Boolean = false
+    isPreparingDownload: Boolean = false,
+    backoffRemaining: Float? = null
 ) {
     val dateFormatter = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US) }
 
@@ -141,7 +142,12 @@ fun ResultItem(
                                 disabledContentColor = Color.Black
                             )
                         ) {
-                            Text(if (isLoadingPlayback) "LOADING..." else "LISTEN", fontWeight = FontWeight.Bold)
+                            val buttonText = when {
+                                backoffRemaining != null && backoffRemaining > 0 -> "WAIT ${String.format(Locale.US, "%.1f", backoffRemaining)}s"
+                                isLoadingPlayback -> "LOADING..."
+                                else -> "LISTEN"
+                            }
+                            Text(buttonText, fontWeight = FontWeight.Bold)
                         }
                     }
 
