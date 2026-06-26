@@ -315,6 +315,40 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Battery Optimization
+        val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager }
+        val isIgnoringBatteryOptimizations = remember(permissionsTrigger) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            } else true
+        }
+
+        if (!isIgnoringBatteryOptimizations) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.Black)
+                    .padding(12.dp)
+            ) {
+                Text("Background Playback", fontWeight = FontWeight.Bold, color = Color.Black)
+                Text("The system may kill the app during background playback. Disable battery optimization for the best experience.", 
+                    style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                    shape = RectangleShape
+                ) {
+                    Text("OPTIMIZATION SETTINGS", fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         PermissionItem(
             name = "Internet",
             description = "Needed for search and online playback.",
