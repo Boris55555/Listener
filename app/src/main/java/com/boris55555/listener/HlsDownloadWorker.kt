@@ -27,7 +27,6 @@ class HlsDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
         
         val outputFilePath = File(publicDir, "$sanitizedName.mp3").absolutePath
         
-        DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = true)
         Log.d("HlsDownloadWorker", "Starting LBRY HLS download & conversion: $url")
 
         try {
@@ -53,7 +52,6 @@ class HlsDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
             if (!initSuccessful) {
                 Log.e("HlsDownloadWorker", "Could not initialize YoutubeDL instance for HLS.")
-                DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
                 return@withContext Result.failure()
             }
 
@@ -76,8 +74,6 @@ class HlsDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
                 }
             }
             
-            DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
-            
             if (response.exitCode == 0) {
                 Log.d("HlsDownloadWorker", "HLS Download successful.")
                 applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
@@ -89,7 +85,6 @@ class HlsDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
             }
         } catch (e: Exception) {
             Log.e("HlsDownloadWorker", "Error during HLS execution", e)
-            DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
             applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
             Result.failure()
         }

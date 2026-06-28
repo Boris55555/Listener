@@ -66,59 +66,68 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         }
 
         val ext = inputFile.extension.lowercase()
-        val isVideo = ext in listOf("mp4", "mkv", "webm", "avi", "mov")
-        val isAudioToConvert = ext in listOf("m4a", "aac", "opus", "ogg")
+        val isVideo = ext in listOf("mp4", "mkv", "webm", "avi", "mov", "flv")
+        val isAudio = ext in listOf("m4a", "mp3", "aac", "opus", "ogg", "wav", "flac", "m4b")
 
-        if (!isVideo && !isAudioToConvert) {
-            Log.d("ConversionWorker", "File does not need conversion: ${inputFile.name}")
+        if (isAudio) {
+            Log.d("ConversionWorker", "File is already an audio file, no conversion needed: ${inputFile.name}")
+            return@withContext Result.success()
+        }
+
+        if (!isVideo) {
+            Log.d("ConversionWorker", "File type not recognized for conversion: ${inputFile.name}")
             return@withContext Result.success()
         }
 
         val outputFilePath = inputFile.absolutePath.substringBeforeLast(".") + ".mp3"
         val outputFile = File(outputFilePath)
+        val sanitizedTitle = DownloadManagerHelper.sanitizeFilename(title)
 
         Log.d("ConversionWorker", "Starting conversion: ${inputFile.name} -> ${outputFile.name}")
         
-        val sanitizedTitle = DownloadManagerHelper.sanitizeFilename(title)
         DownloadManagerHelper.markConverting(applicationContext, sanitizedTitle, converting = true)
 
-        // Base command for MP3 conversion
-        // -y (overwrite), -i (input), -vn (no video), -acodec libmp3lame, -q:a 2 (high quality VBR)
-        var command = "-y -i \"${inputFile.absolutePath}\" -vn -acodec libmp3lame -q:a 2"
-        
-        // Check for SponsorBlock segments in metadata
-        val metadata = StorageManager.loadDownloadMetadata(applicationContext, sanitizedTitle)
-        if (metadata != null && (metadata.source == "YOUTUBE" || metadata.url.contains("youtube.com") || metadata.url.contains("youtu.be"))) {
-            val videoId = extractYoutubeId(metadata.url)
-            if (videoId != null) {
-                try {
-                    val segments = SponsorBlockManager.fetchSegments(videoId)
-                    if (segments.isNotEmpty()) {
-                        Log.d("ConversionWorker", "Found ${segments.size} SponsorBlock segments to skip for $videoId")
-                        // For now, we don't apply the cuts via FFmpeg filter because it's extremely complex to do correctly in one pass
-                        // and might fail. We'll rely on the player skip logic or implement it here later if needed.
+        try {
+            // Base command for MP3 conversion
+            // -y (overwrite), -i (input), -vn (no video), -acodec libmp3lame, -q:a 2 (high quality VBR)
+            var command = "-y -i \"${inputFile.absolutePath}\" -vn -acodec libmp3lame -q:a 2"
+            
+            // Check for SponsorBlock segments in metadata
+            val metadata = StorageManager.loadDownloadMetadata(applicationContext, sanitizedTitle)
+            if (metadata != null && (metadata.source == "YOUTUBE" || metadata.url.contains("youtube.com") || metadata.url.contains("youtu.be"))) {
+                val videoId = extractYoutubeId(metadata.url)
+                if (videoId != null) {
+                    try {
+                        val segments = SponsorBlockManager.fetchSegments(videoId)
+                        if (segments.isNotEmpty()) {
+                            Log.d("ConversionWorker", "Found ${segments.size} SponsorBlock segments to skip for $videoId")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ConversionWorker", "Could not fetch SponsorBlock segments: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w("ConversionWorker", "Could not fetch SponsorBlock segments: ${e.message}")
                 }
             }
-        }
 
-        command += " \"$outputFilePath\""
+            command += " \"$outputFilePath\""
 
-        val session = FFmpegKit.execute(command)
-        
-        DownloadManagerHelper.markConverting(applicationContext, sanitizedTitle, converting = false)
-
-        if (ReturnCode.isSuccess(session.returnCode)) {
-            Log.d("ConversionWorker", "Conversion successful. Deleting original file.")
-            inputFile.delete()
-            applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
-            Result.success()
-        } else {
-            Log.e("ConversionWorker", "Conversion failed with return code ${session.returnCode}. Error: ${session.failStackTrace}")
-            applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
+            val session = FFmpegKit.execute(command)
+            
+            if (ReturnCode.isSuccess(session.returnCode)) {
+                Log.d("ConversionWorker", "Conversion successful. Deleting original file.")
+                inputFile.delete()
+                applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
+                Result.success()
+            } else {
+                Log.e("ConversionWorker", "Conversion failed with return code ${session.returnCode}. Error: ${session.failStackTrace}")
+                applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
+                Result.failure()
+            }
+        } catch (e: Exception) {
+            Log.e("ConversionWorker", "Error during conversion", e)
             Result.failure()
+        } finally {
+            DownloadManagerHelper.markConverting(applicationContext, sanitizedTitle, converting = false)
+            applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
         }
     }
 

@@ -98,10 +98,23 @@ class MainViewModel : ViewModel() {
     private var currentListLinkHandler: ListLinkHandler? = null
     private var currentSearchQuery: String? = null
     
-    private val channelCache = mutableMapOf<String, List<SearchResult>>()
+    private val channelCache = LinkedHashMap<String, List<SearchResult>>(20, 0.75f, true)
     private val rssOriginalItems = mutableMapOf<String, List<Triple<SearchResult, Long, String?>>>()
     
+    private val MAX_CACHE_CHANNELS = 20
+
     private var isPollingDownloads = false
+
+    private fun addToCache(url: String, results: List<SearchResult>) {
+        if (channelCache.size >= MAX_CACHE_CHANNELS && !channelCache.containsKey(url)) {
+            val it = channelCache.keys.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
+        channelCache[url] = results
+    }
 
     fun initSubscriptions(context: Context) {
         viewModelScope.launch {
@@ -500,7 +513,7 @@ class MainViewModel : ViewModel() {
                             
                             // Merge background fetch with current results to ensure cache is fresh
                             val merged = (cached + container.results).distinctBy { it.url }.sortedByDescending { it.pubDate }
-                            channelCache[subscription.url] = merged
+                            addToCache(subscription.url, merged)
                             
                             _hasMore.value = merged.size > 5 || container.nextPage != null
                         } catch (e: Exception) {}
@@ -536,7 +549,7 @@ class MainViewModel : ViewModel() {
                 currentNextPage = container.nextPage
                 val display = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = display
-                channelCache[subscription.url] = results 
+                addToCache(subscription.url, results) 
                 _hasMore.value = results.size > 5 || container.nextPage != null
                 StorageManager.saveChannelCache(context, channelCache)
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
@@ -554,7 +567,7 @@ class MainViewModel : ViewModel() {
                     if (rssResults.isNotEmpty()) {
                         val display = rssResults.take(5).map { syncResultStatus(context, it) }
                         _searchResults.value = display
-                        channelCache[subscription.url] = rssResults
+                        addToCache(subscription.url, rssResults)
                         _hasMore.value = rssResults.size > 5
                         // Also try to get next page from NewPipe in background to support "Load More"
                         viewModelScope.launch {
@@ -577,7 +590,7 @@ class MainViewModel : ViewModel() {
                 val results = container.results
                 val display = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = display
-                channelCache[subscription.url] = results 
+                addToCache(subscription.url, results) 
                 _hasMore.value = results.size > 5 || container.nextPage != null
                 StorageManager.saveChannelCache(context, channelCache)
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
@@ -589,10 +602,11 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             
+            val activeMetadata = withContext(Dispatchers.IO) { StorageManager.loadAllDownloadMetadata(context) }
+            
             // 1. Refresh downloaded files and cleanup metadata for missing files
             withContext(Dispatchers.IO) {
-                val metadata = StorageManager.loadAllDownloadMetadata(context)
-                metadata.keys.forEach { fileName ->
+                activeMetadata.keys.forEach { fileName ->
                     if (!DownloadManagerHelper.isFileFullyDownloaded(context, fileName)) {
                         StorageManager.deleteDownloadMetadata(context, fileName)
                     }
@@ -600,8 +614,15 @@ class MainViewModel : ViewModel() {
             }
             refreshDownloadedFilesInternal(context)
             
-            // 2. Update status tags in existing results
-            _searchResults.value = _searchResults.value.map { syncResultStatus(context, it) }
+            // 2. Update status tags in existing results using a shared cache lookup for efficiency
+            val currentSubs = _subscriptions.value
+            _searchResults.value = _searchResults.value.map { res ->
+                val fullyDownloaded = DownloadManagerHelper.isFileFullyDownloaded(context, res.name)
+                res.copy(
+                    isDownloaded = fullyDownloaded,
+                    isFollowed = currentSubs.any { it.url == res.url }
+                )
+            }
             
             // 3. Update all subscriptions for new content
             val currentSubsList = _subscriptions.value.toMutableList()
@@ -614,7 +635,7 @@ class MainViewModel : ViewModel() {
                             else -> YouTubeManager.fetchChannelInitial(sub.url, _showYoutubeLive.value, sub.name).results.take(10)
                         }
                         if (results.isNotEmpty()) {
-                            channelCache[sub.url] = results
+                            addToCache(sub.url, results)
                             val latestItem = results.first()
                             val latestUrl = latestItem.url
                             if (latestUrl != sub.latestItemUrl) {
@@ -681,7 +702,7 @@ class MainViewModel : ViewModel() {
                     
                     // Update cache with results from page 1 (might have more than we had)
                     val merged = (cachedFull + container.results).distinctBy { it.url }.sortedByDescending { it.pubDate }
-                    channelCache[sub.url] = merged
+                    addToCache(sub.url, merged)
                     
                     // If we found more items on page 1 than we were showing, show them instead of fetching page 2 yet
                     if (merged.size > currentList.size) {
@@ -734,7 +755,7 @@ class MainViewModel : ViewModel() {
                     _hasMore.value = false
                 } else {
                     val updatedCache = (cachedFull + moreResults).distinctBy { it.url }.sortedByDescending { it.pubDate }
-                    channelCache[sub.url] = updatedCache
+                    addToCache(sub.url, updatedCache)
                     
                     val nextBatch = moreResults.take(5).map { syncResultStatus(context, it) }
                     val newList = currentList + nextBatch
@@ -758,7 +779,7 @@ class MainViewModel : ViewModel() {
                 rssOriginalItems[url] = results.map { Triple<SearchResult, Long, String?>(it, it.pubDate, it.url) }
                 val displayList = results.take(5).map { syncResultStatus(context, it) }
                 _searchResults.value = displayList
-                channelCache[url] = results
+                addToCache(url, results)
                 StorageManager.saveChannelCache(context, channelCache)
                 _hasMore.value = results.size > 5
             } catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }

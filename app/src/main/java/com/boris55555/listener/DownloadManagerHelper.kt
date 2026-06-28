@@ -77,7 +77,7 @@ object DownloadManagerHelper {
         
         if (isCurrentlyDownloading(dm, sanitizedName)) return false
 
-        val extensions = listOf("m4a", "mp3", "mp4")
+        val extensions = listOf("m4a", "mp3", "mp4", "webm", "opus")
 
         val customUri = getDownloadPath(context)
         if (customUri != null) {
@@ -113,7 +113,7 @@ object DownloadManagerHelper {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val convertingFiles = prefs.getStringSet("converting_files", emptySet()) ?: emptySet()
 
-        val extensions = listOf(".m4a", ".mp3", ".mp4", "")
+        val extensions = listOf(".m4a", ".mp3", ".mp4", ".webm", ".opus", "")
 
         // 1. Finished files from custom folder
         val customUri = getDownloadPath(context)

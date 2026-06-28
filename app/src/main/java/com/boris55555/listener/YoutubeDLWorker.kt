@@ -27,7 +27,6 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
         
         val outputFilePath = File(publicDir, "$sanitizedName.mp3").absolutePath
         
-        DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = true)
         Log.d("YoutubeDLWorker", "Starting yt-dlp download: $url")
 
         try {
@@ -55,7 +54,6 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
             if (!initSuccessful) {
                 Log.e("YoutubeDLWorker", "Could not initialize YoutubeDL instance.")
-                DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
                 return@withContext Result.failure()
             }
 
@@ -101,8 +99,6 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 }
             }
 
-            DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
-
             Log.d("YoutubeDLWorker", "yt-dlp execution finished. Exit code: ${response.exitCode}")
             Log.d("YoutubeDLWorker", "yt-dlp output: ${response.out}")
 
@@ -117,7 +113,6 @@ class YoutubeDLWorker(context: Context, params: WorkerParameters) : CoroutineWor
             }
         } catch (e: Exception) {
             Log.e("YoutubeDLWorker", "Error during yt-dlp execution", e)
-            DownloadManagerHelper.markConverting(applicationContext, sanitizedName, converting = false)
             applicationContext.sendBroadcast(Intent("com.boris55555.listener.CONVERSION_REFRESH"))
             Result.failure()
         }

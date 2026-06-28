@@ -1,21 +1,36 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ProGuard rules for Listener app
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Media3 / ExoPlayer
+-keep class androidx.media3.common.** { *; }
+-keep class androidx.media3.exoplayer.** { *; }
+-keep class androidx.media3.session.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# NewPipe Extractor (heavy reflection usage)
+-keep class org.schabi.newpipe.extractor.** { *; }
+-keep interface org.schabi.newpipe.extractor.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# FFmpegKit
+-keep class com.arthenica.ffmpegkit.** { *; }
+
+# YoutubeDL-Android
+-keep class com.yausername.youtubedl_android.** { *; }
+-keep class com.yausername.ffmpeg.** { *; }
+
+# OkHttp / Okio
+-keepattributes Signature
+-keepattributes *Annotation*
+-dontwarn okio.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+
+# JSoup
+-keep class org.jsoup.** { *; }
+
+# Nanojson
+-keep class com.grack.nanojson.** { *; }
+
+# Keep line numbers for better crash reports
+-keepattributes SourceFile,LineNumberTable
+
+# Rhino / Mozilla Javascript (used by NewPipe or others)
+-dontwarn java.beans.**
